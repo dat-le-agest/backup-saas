@@ -7,5 +7,8 @@ import (
 
 // user:password@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=True&loc=Local
 func MySQLDB(dsn string) (db *gorm.DB, error error) {
-	return gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	return gorm.Open(mysql.Open(dsn), &gorm.Config{
+		// unique violations become gorm.ErrDuplicatedKey, portable across drivers
+		TranslateError: true,
+	})
 }

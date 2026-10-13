@@ -7,5 +7,8 @@ import (
 
 // /tmp/gorm.db
 func SQLiteDB(dsn string) (db *gorm.DB, err error) {
-	return gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	return gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		// unique violations become gorm.ErrDuplicatedKey, portable across drivers
+		TranslateError: true,
+	})
 }
