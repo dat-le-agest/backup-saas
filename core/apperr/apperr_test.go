@@ -37,6 +37,16 @@ func TestCode(t *testing.T) {
 	}
 }
 
+func TestFromCode(t *testing.T) {
+	err := FromCode("forbidden", "no")
+	if !errors.Is(err, ErrForbidden) || err.Error() != "no" || Code(err) != "forbidden" {
+		t.Errorf("forbidden: %v", err)
+	}
+	if err := FromCode("internal", "boom"); Code(err) != "internal" || HTTPStatus(err) != 500 {
+		t.Errorf("internal: %v", err)
+	}
+}
+
 func TestValidationError(t *testing.T) {
 	err := fmt.Errorf("create: %w", Invalid("title", "is required"))
 	if !errors.Is(err, ErrInvalid) || HTTPStatus(err) != 400 || Code(err) != "invalid_input" {

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -84,7 +86,9 @@ func (f *fakeNotes) ListNotes(ctx context.Context, req *notev1.ListNotesRequest)
 	defer f.mu.Unlock()
 	res := &notev1.ListNotesResponse{Page: max(req.GetPage(), 1), Limit: 20, Total: int64(len(f.notes))}
 	for _, n := range f.notes {
-		res.Notes = append(res.Notes, n)
+		listed := proto.Clone(n).(*notev1.Note)
+		listed.Permissions = &notev1.NotePermissions{CanUpdate: true}
+		res.Notes = append(res.Notes, listed)
 	}
 	return res, nil
 }
@@ -371,6 +375,10 @@ func TestNotesThroughGateway(t *testing.T) {
 	res = s.do(http.MethodGet, "/v1/notes?page=1", "", tok)
 	if paging, _ := res.body["paging"].(map[string]any); res.status != 200 || paging["total"] != float64(1) {
 		t.Fatalf("list: %d %v", res.status, res.body)
+	}
+	items, _ := res.body["data"].([]any)
+	if len(items) != 1 || !reflect.DeepEqual(items[0].(map[string]any)["permissions"], map[string]any{"can_update": true, "can_delete": false}) {
+		t.Fatalf("list permissions: %v", res.body["data"])
 	}
 	res = s.do(http.MethodPatch, "/v1/notes/1", `{"content":"edited"}`, tok)
 	if res.status != 200 || data(res)["content"] != "edited" || data(res)["title"] != "first" {

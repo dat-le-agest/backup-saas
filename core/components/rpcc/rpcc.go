@@ -26,6 +26,8 @@ import (
 const defaultTimeout = 10
 
 type ClientComponent interface {
+	// Enabled is false for an Optional client whose URL is not set.
+	Enabled() bool
 	HTTPClient() connect.HTTPClient
 	BaseURL() string
 	Options() []connect.ClientOption
@@ -42,10 +44,11 @@ func New[T any](
 }
 
 type rpcClient struct {
-	id      string
-	prefix  string
-	rawURL  string
-	timeout int
+	id       string
+	prefix   string
+	optional bool
+	rawURL   string
+	timeout  int
 
 	logger     logger.Logger
 	telemetry  connect.Interceptor
@@ -54,10 +57,23 @@ type rpcClient struct {
 	httpClient *http.Client
 }
 
+type Option func(*rpcClient)
+
+// Optional makes the URL optional: without it the client is disabled
+// (Enabled() is false) instead of failing at startup. For upstreams a service
+// can work without, e.g. the central authz service (RBAC fallback).
+func Optional() Option { return func(c *rpcClient) { c.optional = true } }
+
 // NewClient: id is the sctx component ID, prefix names the flags (<prefix>-url, <prefix>-timeout).
-func NewClient(id, prefix string) *rpcClient {
-	return &rpcClient{id: id, prefix: prefix}
+func NewClient(id, prefix string, opts ...Option) *rpcClient {
+	c := &rpcClient{id: id, prefix: prefix}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
+
+func (c *rpcClient) Enabled() bool { return c.httpClient != nil }
 
 func (c *rpcClient) ID() string {
 	return c.id
@@ -83,6 +99,10 @@ func (c *rpcClient) Activate(serviceCtx sctx.ServiceContext) error {
 	c.logger = serviceCtx.Logger(c.id)
 
 	if c.rawURL == "" {
+		if c.optional {
+			c.logger.Infof("rpc client disabled (no %s-url)", c.prefix)
+			return nil
+		}
 		return fmt.Errorf("%s-url is required", c.prefix)
 	}
 

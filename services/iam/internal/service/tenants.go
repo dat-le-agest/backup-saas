@@ -14,11 +14,12 @@ import (
 type TenantService struct {
 	store Store
 	uow   uow.UnitOfWork
+	rel   authz.Relationships
 	cache VersionCache
 }
 
-func NewTenantService(store Store, u uow.UnitOfWork, cache VersionCache) *TenantService {
-	return &TenantService{store: store, uow: u, cache: cache}
+func NewTenantService(store Store, u uow.UnitOfWork, rel authz.Relationships, cache VersionCache) *TenantService {
+	return &TenantService{store: store, uow: u, rel: rel, cache: cache}
 }
 
 // Create makes a tenant owned by the caller. Needs a logged-in user, not a tenant.
@@ -39,7 +40,10 @@ func (s *TenantService) Create(ctx context.Context, name string) (*model.Tenant,
 		if err := s.store.CreateTenant(ctx, tenant); err != nil {
 			return err
 		}
-		return s.store.SaveMembership(ctx, owner)
+		if err := s.store.SaveMembership(ctx, owner); err != nil {
+			return err
+		}
+		return s.rel.Write(ctx, roleTuple(tenant.ID, userID, authz.RoleOwner))
 	})
 	if err != nil {
 		return nil, err

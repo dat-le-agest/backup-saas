@@ -16,6 +16,15 @@ type Note struct {
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// set by get and list
+	Permissions *NotePermissions `json:"permissions,omitempty"`
+}
+
+// NotePermissions: what the caller may do with a note (to show or hide
+// actions; update and delete check again).
+type NotePermissions struct {
+	CanUpdate bool `json:"can_update"`
+	CanDelete bool `json:"can_delete"`
 }
 
 type CreateNoteRequest struct {
@@ -41,7 +50,7 @@ type Paging struct {
 }
 
 func NoteFromProto(n *notev1.Note) Note {
-	return Note{
+	note := Note{
 		ID:        n.GetId(),
 		Title:     n.GetTitle(),
 		Content:   n.GetContent(),
@@ -49,6 +58,10 @@ func NoteFromProto(n *notev1.Note) Note {
 		CreatedAt: n.GetCreateTime().AsTime(),
 		UpdatedAt: n.GetUpdateTime().AsTime(),
 	}
+	if p := n.GetPermissions(); p != nil {
+		note.Permissions = &NotePermissions{CanUpdate: p.GetCanUpdate(), CanDelete: p.GetCanDelete()}
+	}
+	return note
 }
 
 func NotesFromProto(notes []*notev1.Note) []Note {

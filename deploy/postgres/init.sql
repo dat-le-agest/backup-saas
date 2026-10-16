@@ -6,3 +6,7 @@ CREATE DATABASE iam OWNER iam;
 
 CREATE ROLE note LOGIN PASSWORD 'note' NOSUPERUSER NOBYPASSRLS;
 CREATE DATABASE note OWNER note;
+
+-- centralized authorization (ReBAC); schema: deploy/postgres/authz/init.sql
+CREATE ROLE authz LOGIN PASSWORD 'authz' NOSUPERUSER NOBYPASSRLS;
+CREATE DATABASE authz OWNER authz;

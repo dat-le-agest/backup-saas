@@ -30,7 +30,18 @@ services:
       <<: *service-env
       OTEL_SERVICE_NAME: iam
       GIN_PORT: "3001"
+      AUTHZ_SERVICE_URL: http://authz:3002 # sync memberships to the authz service
       DB_DSN: postgres://iam:iam@postgres:5432/iam?sslmode=disable
+
+  # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
+  authz:
+    <<: *service
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: services/authz } }
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: authz
+      GIN_PORT: "3002"
+      DB_DSN: postgres://authz:authz@postgres:5432/authz?sslmode=disable
 
   # the service template itself, run as the "note" example service
   note:
@@ -40,6 +51,8 @@ services:
       <<: *service-env
       OTEL_SERVICE_NAME: note
       GIN_PORT: "3000"
+      AUTHZ_SERVICE_URL: http://authz:3002 # sync note relationships to the authz service
+      AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-model + make authz-backfill
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
 
   gateway:
@@ -67,7 +80,7 @@ services:
       - postgres-data:/var/lib/postgresql
     ports: ["5432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'note'\" | grep -q 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'authz'\" | grep -q 1"]
       interval: 2s
       timeout: 3s
       retries: 30

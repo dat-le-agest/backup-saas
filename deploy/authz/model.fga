@@ -1,0 +1,42 @@
+model
+  schema 1.1
+
+# Platform-wide authorization model of the central authz service.
+# Load it with: make authz-model   (stores a new version and activates it)
+#
+# Naming convention (core/authz.DefaultRelations):
+#   object-level  Check(action, {Type: t, ID: id})  →  t:id#can_<action>
+#   type-level    Check(action, {Type: t})          →  tenant:<tenant>#can_<action>_<t>
+#
+# Equivalent to the RBAC policies the services ship with (e.g. NotePolicy),
+# so switching a service to ReBAC changes nothing until tuples share more.
+
+type user
+
+# iam memberships become tuples: tenant:<id>#<role>@user:<id>
+type tenant
+  relations
+    define owner: [user]
+    define admin: [user] or owner
+    define member: [user] or admin
+    define viewer: [user] or member
+
+    # notes: create and list
+    define can_create_note: member
+    define can_read_note: viewer
+
+# note service: note:<id>#tenant@tenant:<id> and note:<id>#owner@user:<id> on create
+type note
+  relations
+    define tenant: [tenant]
+    define owner: [user]
+    # an owner keeps editing rights only while still a member of the tenant
+    # (a creator demoted to viewer can't edit their old notes, as with RBAC)
+    define owner_member: owner and member from tenant
+    # [user] / [user, user:*] allow sharing a single note beyond the roles
+    define editor: [user] or owner_member or admin from tenant
+    define viewer: [user, user:*] or editor or viewer from tenant
+
+    define can_read: viewer
+    define can_update: editor
+    define can_delete: editor

@@ -58,7 +58,7 @@ func (h *NoteHandler) GetNote(ctx context.Context, req *notev1.GetNoteRequest) (
 	if err != nil {
 		return nil, err
 	}
-	return &notev1.GetNoteResponse{Note: toProto(note)}, nil
+	return &notev1.GetNoteResponse{Note: viewToProto(note)}, nil
 }
 
 func (h *NoteHandler) ListNotes(ctx context.Context, req *notev1.ListNotesRequest) (*notev1.ListNotesResponse, error) {
@@ -76,7 +76,7 @@ func (h *NoteHandler) ListNotes(ctx context.Context, req *notev1.ListNotesReques
 		Total: paging.Total,
 	}
 	for i := range notes {
-		res.Notes = append(res.Notes, toProto(&notes[i]))
+		res.Notes = append(res.Notes, viewToProto(&notes[i]))
 	}
 	return res, nil
 }
@@ -119,6 +119,13 @@ func toProto(n *model.Note) *notev1.Note {
 		CreateTime: timestamppb.New(n.CreatedAt),
 		UpdateTime: timestamppb.New(n.UpdatedAt),
 	}
+}
+
+// viewToProto: a note with the caller's permissions.
+func viewToProto(v *model.NoteView) *notev1.Note {
+	n := toProto(&v.Note)
+	n.Permissions = &notev1.NotePermissions{CanUpdate: v.CanUpdate, CanDelete: v.CanDelete}
+	return n
 }
 
 func toID(id uint64) (uint, error) {

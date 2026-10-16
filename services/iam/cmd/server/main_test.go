@@ -7,17 +7,21 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	authzv1 "api/gen/go/authz/v1"
+	"api/gen/go/authz/v1/authzv1connect"
 	iamv1 "api/gen/go/iam/v1"
 	"api/gen/go/iam/v1/iamv1connect"
 	"core/apperr"
 	"core/authz"
 	"core/di"
 	zaplogger "core/logger/zap"
+	"core/outbox"
 	"core/reqctx"
 	"core/rpc"
 	"core/testdb"
@@ -39,6 +43,7 @@ import (
 )
 
 type env struct {
+	c        *di.Container
 	db       *gorm.DB
 	client   iamv1connect.IamServiceClient
 	verifier *token.Verifier
@@ -47,6 +52,11 @@ type env struct {
 }
 
 func newEnv(t *testing.T, devLogin bool) *env {
+	t.Helper()
+	return newEnvWith(t, devLogin, nil)
+}
+
+func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzServiceClient) *env {
 	t.Helper()
 
 	db := testdb.New(t, migrations.FS) // real Postgres with the service's migrations
@@ -65,6 +75,7 @@ func newEnv(t *testing.T, devLogin bool) *env {
 		tokens:     service.TokenConfig{DevLogin: devLogin},
 		versionTTL: time.Hour,
 		logger:     zaplogger.NewZapLogger().GetLogger("test"),
+		authz:      authzClient,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +103,7 @@ func newEnv(t *testing.T, devLogin bool) *env {
 	)
 
 	return &env{
+		c:        c,
 		db:       db,
 		client:   client,
 		verifier: token.NewVerifier(token.NewStaticKeys(key.Public().(ed25519.PublicKey)), "iam", "api"),
@@ -632,5 +644,63 @@ func TestAuthMetrics(t *testing.T) {
 	}
 	if registrations != 1 || logins["success"] != 1 || logins["invalid_credentials"] != 2 {
 		t.Fatalf("registrations=%d logins=%v", registrations, logins)
+	}
+}
+
+// fakeAuthz records each WriteTuples call the outbox relay makes.
+type fakeAuthz struct {
+	authzv1connect.AuthzServiceClient
+	calls [][2][]string // writes, deletes
+}
+
+func (f *fakeAuthz) WriteTuples(_ context.Context, req *authzv1.WriteTuplesRequest) (*authzv1.WriteTuplesResponse, error) {
+	str := func(ts []*authzv1.Tuple) []string {
+		out := []string{}
+		for _, t := range ts {
+			out = append(out, t.GetObject()+"#"+t.GetRelation()+"@"+t.GetSubject())
+		}
+		return out
+	}
+	f.calls = append(f.calls, [2][]string{str(req.GetWrites()), str(req.GetDeletes())})
+	return &authzv1.WriteTuplesResponse{}, nil
+}
+
+// Membership changes reach the authz service through the outbox, in order;
+// a role change is a single atomic change.
+func TestMembershipsSyncThroughOutbox(t *testing.T) {
+	fake := &fakeAuthz{}
+	e := newEnvWith(t, true, fake)
+	tenantID, owner := e.setupTenant(t)
+	e.login(t, "max", "")
+
+	if _, err := e.client.AddMember(owner, &iamv1.AddMemberRequest{UserId: "max", Role: authz.RoleMember}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.client.UpdateMemberRole(owner, &iamv1.UpdateMemberRoleRequest{UserId: "max", Role: authz.RoleAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.client.RemoveMember(owner, &iamv1.RemoveMemberRequest{UserId: "max"}); err != nil {
+		t.Fatal(err)
+	}
+	// refused changes leave nothing behind
+	if _, err := e.client.UpdateMemberRole(owner, &iamv1.UpdateMemberRoleRequest{UserId: "alice", Role: authz.RoleViewer}); err == nil {
+		t.Fatal("last owner demoted")
+	}
+
+	relay := di.MustGet[*outbox.Outbox](e.c).NewRelay(e.db, zaplogger.NewZapLogger().GetLogger("test"), outbox.RelayOptions{})
+	relay.Handle(authz.TuplesTopic, authz.DeliverTuples(deps{authz: fake}.writeTuples))
+	if n, err := relay.RunOnce(context.Background()); err != nil || n != 4 {
+		t.Fatalf("relay: %d %v", n, err)
+	}
+
+	tn := "tenant:" + tenantID
+	want := [][2][]string{
+		{{tn + "#owner@user:alice"}, {}},
+		{{tn + "#member@user:max"}, {}},
+		{{tn + "#admin@user:max"}, {tn + "#member@user:max"}}, // one message
+		{{}, {tn + "#admin@user:max"}},
+	}
+	if !reflect.DeepEqual(fake.calls, want) {
+		t.Fatalf("delivered\n %v\nwant\n %v", fake.calls, want)
 	}
 }

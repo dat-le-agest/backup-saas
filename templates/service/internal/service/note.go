@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -40,15 +41,18 @@ type NoteRepository interface {
 type NoteService struct {
 	repo    NoteRepository
 	az      authz.Authorizer
+	rel     authz.Relationships
 	uow     uow.UnitOfWork
 	created metric.Int64Counter
 }
 
-func NewNoteService(repo NoteRepository, az authz.Authorizer, u uow.UnitOfWork) *NoteService {
+// rel records each note's relationships (tenant, owner) for the central authz
+// service, in the same transaction as the note (outbox).
+func NewNoteService(repo NoteRepository, az authz.Authorizer, rel authz.Relationships, u uow.UnitOfWork) *NoteService {
 	// example business metric (Prometheus: notes_created_total); the global meter
 	// is set up by core/components/otelc
 	created, _ := otel.Meter("note").Int64Counter("notes.created", metric.WithDescription("Notes created"))
-	return &NoteService{repo: repo, az: az, uow: u, created: created}
+	return &NoteService{repo: repo, az: az, rel: rel, uow: u, created: created}
 }
 
 func (s *NoteService) Create(ctx context.Context, data *model.NoteCreate) (*model.Note, error) {
@@ -69,18 +73,35 @@ func (s *NoteService) Create(ctx context.Context, data *model.NoteCreate) (*mode
 	}
 
 	note := &model.Note{TenantID: tenantID, CreatedBy: id.UserID, Title: title, Content: data.Content}
-	if err := s.repo.Create(ctx, note); err != nil {
+	err = s.uow.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.Create(ctx, note); err != nil {
+			return err
+		}
+		uow.AfterCommit(ctx, func(ctx context.Context) { s.created.Add(ctx, 1) })
+		return s.rel.Write(ctx, noteTuples(note)...)
+	})
+	if err != nil {
 		return nil, err
 	}
-	uow.AfterCommit(ctx, func(ctx context.Context) { s.created.Add(ctx, 1) })
 	return note, nil
 }
 
-func (s *NoteService) Get(ctx context.Context, id uint) (*model.Note, error) {
-	return s.load(ctx, id, authz.Read)
+// Get returns a note with the caller's permissions on it.
+func (s *NoteService) Get(ctx context.Context, id uint) (*model.NoteView, error) {
+	note, err := s.load(ctx, id, authz.Read)
+	if err != nil {
+		return nil, err
+	}
+	views, err := s.withPermissions(ctx, []model.Note{*note})
+	if err != nil {
+		return nil, err
+	}
+	return &views[0], nil
 }
 
-func (s *NoteService) List(ctx context.Context, paging *model.Paging) ([]model.Note, error) {
+// List returns a page of the tenant's notes with the caller's permissions on
+// each, decided in one batch (one BatchCheck call with ReBAC).
+func (s *NoteService) List(ctx context.Context, paging *model.Paging) ([]model.NoteView, error) {
 	tenantID, err := tenancy.TenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -99,7 +120,47 @@ func (s *NoteService) List(ctx context.Context, paging *model.Paging) ([]model.N
 	if paging.Limit > maxLimit {
 		paging.Limit = maxLimit
 	}
-	return s.repo.List(ctx, paging)
+	notes, err := s.repo.List(ctx, paging)
+	if err != nil {
+		return nil, err
+	}
+	return s.withPermissions(ctx, notes)
+}
+
+// withPermissions decides update and delete on every note at once. A denial is
+// false; any other failure (authz service down) fails the call.
+func (s *NoteService) withPermissions(ctx context.Context, notes []model.Note) ([]model.NoteView, error) {
+	reqs := make([]authz.Request, 0, 2*len(notes))
+	for i := range notes {
+		res := noteResource(&notes[i])
+		reqs = append(reqs, authz.Request{Action: authz.Update, Resource: res}, authz.Request{Action: authz.Delete, Resource: res})
+	}
+	errs := authz.CheckMany(ctx, s.az, reqs)
+
+	views := make([]model.NoteView, len(notes))
+	for i := range notes {
+		canUpdate, err := granted(errs[2*i])
+		if err != nil {
+			return nil, err
+		}
+		canDelete, err := granted(errs[2*i+1])
+		if err != nil {
+			return nil, err
+		}
+		views[i] = model.NoteView{Note: notes[i], CanUpdate: canUpdate, CanDelete: canDelete}
+	}
+	return views, nil
+}
+
+// granted: nil → true, a denial → false, anything else is returned.
+func granted(err error) (bool, error) {
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, apperr.ErrForbidden), errors.Is(err, apperr.ErrNotFound):
+		return false, nil
+	}
+	return false, err
 }
 
 func (s *NoteService) Update(ctx context.Context, id uint, data *model.NoteUpdate) (*model.Note, error) {
@@ -129,11 +190,30 @@ func (s *NoteService) Update(ctx context.Context, id uint, data *model.NoteUpdat
 
 func (s *NoteService) Delete(ctx context.Context, id uint) error {
 	return s.uow.Do(ctx, func(ctx context.Context) error {
-		if _, err := s.load(ctx, id, authz.Delete); err != nil {
+		note, err := s.load(ctx, id, authz.Delete)
+		if err != nil {
 			return err
 		}
-		return s.repo.Delete(ctx, id)
+		if err := s.repo.Delete(ctx, id); err != nil {
+			return err
+		}
+		// owner, tenant and any share of the note
+		return s.rel.DeleteObjects(ctx, noteObject(note))
 	})
+}
+
+func noteObject(n *model.Note) string {
+	return ResourceNote + ":" + strconv.FormatUint(uint64(n.ID), 10)
+}
+
+// noteTuples: a note belongs to its tenant and is owned by its creator
+// (relations "tenant" and "owner" of type note in deploy/authz/model.fga).
+func noteTuples(n *model.Note) []authz.Tuple {
+	object := noteObject(n)
+	return []authz.Tuple{
+		{Object: object, Relation: "tenant", Subject: "tenant:" + n.TenantID, TenantID: n.TenantID},
+		{Object: object, Relation: "owner", Subject: "user:" + n.CreatedBy, TenantID: n.TenantID},
+	}
 }
 
 // load fetches a note (tenant-scoped by the repository) and checks action on it.

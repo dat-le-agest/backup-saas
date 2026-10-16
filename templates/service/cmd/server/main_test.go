@@ -3,18 +3,24 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	authzv1 "api/gen/go/authz/v1"
+	"api/gen/go/authz/v1/authzv1connect"
 	notev1 "api/gen/go/note/v1"
 	"api/gen/go/note/v1/notev1connect"
 	"core/apperr"
 	"core/authz"
+	"core/components/authzc"
 	"core/di"
 	zaplogger "core/logger/zap"
+	"core/outbox"
 	"core/reqctx"
 	"core/rpc"
 	"core/testdb"
@@ -38,11 +44,17 @@ func newTestServer(t *testing.T) string {
 
 func newTestServerWithDB(t *testing.T) (string, *gorm.DB) {
 	t.Helper()
+	url, db, _ := newTestServerWith(t, authzSetup{enforce: authzc.EnforceRBAC})
+	return url, db
+}
+
+func newTestServerWith(t *testing.T, setup authzSetup) (string, *gorm.DB, *di.Container) {
+	t.Helper()
 
 	// real Postgres, migrations applied, non-superuser owner: RLS is enforced
 	db := testdb.New(t, migrations.FS)
 
-	c, err := buildContainer(db, zaplogger.NewZapLogger().GetLogger("test"))
+	c, err := buildContainer(db, zaplogger.NewZapLogger().GetLogger("test"), setup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +69,7 @@ func newTestServerWithDB(t *testing.T) (string, *gorm.DB) {
 	srv.Config.Protocols.SetUnencryptedHTTP2(true)
 	srv.Start()
 	t.Cleanup(srv.Close)
-	return srv.URL, db
+	return srv.URL, db, c
 }
 
 // newClient behaves like the gateway's client: gRPC over h2c + core/rpc interceptors.
@@ -100,6 +112,21 @@ func TestNoteCRUD(t *testing.T) {
 	}
 	if len(list.GetNotes()) != 1 || list.GetTotal() != 2 || list.GetNotes()[0].GetTitle() != "second" {
 		t.Fatalf("list: %v", list)
+	}
+	if p := list.GetNotes()[0].GetPermissions(); !p.GetCanUpdate() || !p.GetCanDelete() {
+		t.Fatalf("admin permissions: %v", p)
+	}
+	viewer, _ := c.ListNotes(as("u2", "t1", authz.RoleViewer), &notev1.ListNotesRequest{Limit: 1})
+	if p := viewer.GetNotes()[0].GetPermissions(); p == nil || p.GetCanUpdate() || p.GetCanDelete() {
+		t.Fatalf("viewer permissions: %v", p)
+	}
+
+	got, err := c.GetNote(as("u2", "t1", authz.RoleMember), &notev1.GetNoteRequest{Id: n.GetId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := got.GetNote().GetPermissions(); p == nil || p.GetCanUpdate() || p.GetCanDelete() {
+		t.Fatalf("member on another's note: %v", p)
 	}
 
 	defaults, _ := c.ListNotes(ctx, &notev1.ListNotesRequest{})
@@ -329,5 +356,110 @@ func TestRowLevelSecurityBacksUpRepository(t *testing.T) {
 	db.Raw("SELECT count(*) FROM notes").Scan(&n)
 	if n != 0 {
 		t.Errorf("query outside the unit of work sees %d notes", n)
+	}
+}
+
+// fakeAuthz records the tuples the outbox relay delivers.
+type fakeAuthz struct {
+	authzv1connect.AuthzServiceClient
+	mu             sync.Mutex
+	writes         []*authzv1.Tuple
+	deletes        []*authzv1.Tuple
+	deletedObjects []string
+}
+
+func (f *fakeAuthz) WriteTuples(_ context.Context, req *authzv1.WriteTuplesRequest) (*authzv1.WriteTuplesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes = append(f.writes, req.GetWrites()...)
+	f.deletes = append(f.deletes, req.GetDeletes()...)
+	f.deletedObjects = append(f.deletedObjects, req.GetDeleteObjects()...)
+	return &authzv1.WriteTuplesResponse{}, nil
+}
+
+// Creating and deleting a note records its relationships in the outbox, in the
+// same transaction, and the relay delivers them to the authz service.
+func TestRelationshipsSyncThroughOutbox(t *testing.T) {
+	fake := &fakeAuthz{}
+	setup := authzSetup{client: fake, enforce: authzc.EnforceRBAC}
+	url, db, c := newTestServerWith(t, setup)
+	client := newClient(url)
+	ctx := as("u1", "t1", authz.RoleMember)
+
+	created, err := client.CreateNote(ctx, &notev1.CreateNoteRequest{Title: "synced"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a failed create leaves no message behind
+	if _, err := client.CreateNote(ctx, &notev1.CreateNoteRequest{Title: " "}); err == nil {
+		t.Fatal("blank title accepted")
+	}
+	var pending int64
+	db.Raw(`SELECT count(*) FROM outbox_messages WHERE processed_at IS NULL`).Scan(&pending)
+	if pending != 1 {
+		t.Fatalf("pending outbox messages: %d", pending)
+	}
+
+	relay := di.MustGet[*outbox.Outbox](c).NewRelay(db, zaplogger.NewZapLogger().GetLogger("test"), outbox.RelayOptions{})
+	relay.Handle(authz.TuplesTopic, authz.DeliverTuples(setup.writeTuples))
+	if n, err := relay.RunOnce(context.Background()); err != nil || n != 1 {
+		t.Fatalf("relay: %d %v", n, err)
+	}
+
+	object := fmt.Sprintf("note:%d", created.GetNote().GetId())
+	got := map[string]bool{}
+	for _, w := range fake.writes {
+		got[w.GetObject()+"#"+w.GetRelation()+"@"+w.GetSubject()+" ("+w.GetTenantId()+")"] = true
+	}
+	for _, want := range []string{object + "#tenant@tenant:t1 (t1)", object + "#owner@user:u1 (t1)"} {
+		if !got[want] {
+			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+
+	if _, err := client.DeleteNote(ctx, &notev1.DeleteNoteRequest{Id: created.GetNote().GetId()}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := relay.RunOnce(context.Background()); n != 1 || len(fake.deletedObjects) != 1 || fake.deletedObjects[0] != object {
+		t.Fatalf("delete not synced: %d %v", n, fake.deletedObjects)
+	}
+}
+
+// fakeBatchAuthz answers BatchCheck: allows note:1, reports an error for "note:bad".
+type fakeBatchAuthz struct {
+	authzv1connect.AuthzServiceClient
+	got *authzv1.BatchCheckRequest
+}
+
+func (f *fakeBatchAuthz) BatchCheck(_ context.Context, req *authzv1.BatchCheckRequest) (*authzv1.BatchCheckResponse, error) {
+	f.got = req
+	res := &authzv1.BatchCheckResponse{}
+	for _, c := range req.GetChecks() {
+		r := &authzv1.BatchCheckResult{Allowed: c.GetObject() == "note:1"}
+		if c.GetObject() == "note:bad" {
+			r = &authzv1.BatchCheckResult{Error: &authzv1.CheckError{Code: "invalid_input", Message: "bad object"}}
+		}
+		res.Results = append(res.Results, r)
+	}
+	return res, nil
+}
+
+// With ReBAC enforced, authz.CheckMany is one BatchCheck call.
+func TestCheckManyUsesBatchCheck(t *testing.T) {
+	fake := &fakeBatchAuthz{}
+	az := authzSetup{client: fake, enforce: authzc.EnforceReBAC}.authorizer()
+	res := func(id string) authz.Resource { return authz.Resource{Type: "note", ID: id, TenantID: "t1"} }
+
+	errs := authz.CheckMany(as("u1", "t1", ""), az, []authz.Request{
+		{Action: authz.Read, Resource: res("1")},
+		{Action: authz.Read, Resource: res("2")},
+		{Action: authz.Read, Resource: res("bad")},
+	})
+	if errs[0] != nil || !errors.Is(errs[1], apperr.ErrForbidden) || !errors.Is(errs[2], apperr.ErrInvalid) {
+		t.Fatalf("got %v", errs)
+	}
+	if len(fake.got.GetChecks()) != 3 || fake.got.GetChecks()[1].GetRelation() != "can_read" ||
+		fake.got.GetConsistency() != authzv1.Consistency_CONSISTENCY_MINIMIZE_LATENCY {
+		t.Errorf("request: %v", fake.got)
 	}
 }

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -40,7 +42,12 @@ func (f *fakeRepo) Get(_ context.Context, id uint) (*model.Note, error) {
 }
 func (f *fakeRepo) List(_ context.Context, p *model.Paging) ([]model.Note, error) {
 	f.paging = p
-	return nil, nil
+	var out []model.Note
+	for _, n := range f.notes {
+		out = append(out, *n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 func (f *fakeRepo) Update(_ context.Context, _ uint, d *model.NoteUpdate) error {
 	f.updated = d
@@ -56,7 +63,7 @@ func as(userID, role string) context.Context {
 }
 
 func newSvc(repo *fakeRepo) *NoteService {
-	return NewNoteService(repo, authz.NewRBAC(NotePolicy), uow.Nop{})
+	return NewNoteService(repo, authz.NewRBAC(NotePolicy), &fakeRel{}, uow.Nop{})
 }
 
 func TestCreateStampsTenantAndOwner(t *testing.T) {
@@ -146,6 +153,68 @@ func TestEveryRoleCanRead(t *testing.T) {
 	}
 }
 
+func TestListReturnsPermissions(t *testing.T) {
+	mine := &model.Note{ID: 1, TenantID: "t1", CreatedBy: "u1"}
+	theirs := &model.Note{ID: 2, TenantID: "t1", CreatedBy: "u2"}
+	cases := []struct {
+		role string
+		want []bool // can update/delete mine, then theirs
+	}{
+		{authz.RoleOwner, []bool{true, true, true, true}},
+		{authz.RoleAdmin, []bool{true, true, true, true}},
+		{authz.RoleMember, []bool{true, true, false, false}},
+		{authz.RoleViewer, []bool{false, false, false, false}},
+	}
+	for _, tc := range cases {
+		views, err := newSvc(newRepo(mine, theirs)).List(as("u1", tc.role), &model.Paging{})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.role, err)
+		}
+		got := []bool{views[0].CanUpdate, views[0].CanDelete, views[1].CanUpdate, views[1].CanDelete}
+		if !reflect.DeepEqual(got, tc.want) || views[0].ID != 1 || views[1].ID != 2 {
+			t.Errorf("%s: got %v, want %v", tc.role, got, tc.want)
+		}
+	}
+}
+
+func TestGetReturnsPermissions(t *testing.T) {
+	theirs := &model.Note{ID: 2, TenantID: "t1", CreatedBy: "u2"}
+	cases := []struct {
+		user, role string
+		want       bool // can update and delete
+	}{
+		{"u2", authz.RoleMember, true}, // creator
+		{"u1", authz.RoleMember, false},
+		{"u1", authz.RoleAdmin, true},
+		{"u2", authz.RoleViewer, false}, // creator demoted to viewer
+	}
+	for _, tc := range cases {
+		v, err := newSvc(newRepo(theirs)).Get(as(tc.user, tc.role), theirs.ID)
+		if err != nil {
+			t.Fatalf("%s/%s: %v", tc.user, tc.role, err)
+		}
+		if v.CanUpdate != tc.want || v.CanDelete != tc.want || v.ID != theirs.ID {
+			t.Errorf("%s/%s: got %+v, want %v", tc.user, tc.role, v, tc.want)
+		}
+	}
+}
+
+// A failure other than a denial (authz service down) fails the list instead of
+// silently showing everything as forbidden.
+func TestListFailsWhenPermissionsCantBeDecided(t *testing.T) {
+	// the list check passes, the per-note checks fail
+	down := authz.NewReBAC(authz.CheckFunc(func(_ context.Context, _, relation, _ string, _ authz.Consistency) (bool, error) {
+		if relation == "can_read_note" {
+			return true, nil
+		}
+		return false, apperr.ErrUnavailable
+	}))
+	svc := NewNoteService(newRepo(&model.Note{ID: 1, TenantID: "t1", CreatedBy: "u1"}), down, &fakeRel{}, uow.Nop{})
+	if _, err := svc.List(as("u1", authz.RoleMember), &model.Paging{}); !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestCreateValidatesTitle(t *testing.T) {
 	svc := newSvc(newRepo())
 	for _, title := range []string{"", "   ", strings.Repeat("a", 256)} {
@@ -181,5 +250,60 @@ func TestListClampsPaging(t *testing.T) {
 		if repo.paging.Page != tc.wantPage || repo.paging.Limit != tc.wantLimit {
 			t.Errorf("in (%d,%d): got (%d,%d)", tc.page, tc.limit, repo.paging.Page, repo.paging.Limit)
 		}
+	}
+}
+
+type fakeRel struct {
+	writes, deletes []authz.Tuple
+	deletedObjects  []string
+}
+
+func (f *fakeRel) Write(_ context.Context, t ...authz.Tuple) error {
+	f.writes = append(f.writes, t...)
+	return nil
+}
+func (f *fakeRel) Delete(_ context.Context, t ...authz.Tuple) error {
+	f.deletes = append(f.deletes, t...)
+	return nil
+}
+func (f *fakeRel) DeleteObjects(_ context.Context, o ...string) error {
+	f.deletedObjects = append(f.deletedObjects, o...)
+	return nil
+}
+func (f *fakeRel) Change(_ context.Context, w, d []authz.Tuple) error {
+	f.writes, f.deletes = append(f.writes, w...), append(f.deletes, d...)
+	return nil
+}
+
+func TestNoteRelationshipsAreRecorded(t *testing.T) {
+	repo := newRepo()
+	rel := &fakeRel{}
+	svc := NewNoteService(repo, authz.NewRBAC(NotePolicy), rel, uow.Nop{})
+
+	created, err := svc.Create(as("u1", authz.RoleMember), &model.NoteCreate{Title: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []authz.Tuple{
+		{Object: "note:0", Relation: "tenant", Subject: "tenant:t1", TenantID: "t1"},
+		{Object: "note:0", Relation: "owner", Subject: "user:u1", TenantID: "t1"},
+	}
+	if !reflect.DeepEqual(rel.writes, want) {
+		t.Fatalf("writes %+v", rel.writes)
+	}
+
+	// someone else's delete is refused: nothing recorded
+	repo.notes[created.ID] = created
+	if err := svc.Delete(as("u2", authz.RoleMember), created.ID); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("delete others: %v", err)
+	}
+	if len(rel.deletedObjects) != 0 {
+		t.Fatalf("object forgotten on a refused delete: %+v", rel.deletedObjects)
+	}
+	if err := svc.Delete(as("u1", authz.RoleMember), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rel.deletedObjects, []string{"note:0"}) {
+		t.Fatalf("deleted objects %+v", rel.deletedObjects)
 	}
 }

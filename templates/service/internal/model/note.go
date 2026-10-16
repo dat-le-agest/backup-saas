@@ -14,6 +14,13 @@ type Note struct {
 	UpdatedAt time.Time
 }
 
+// NoteView is a note as listed to a caller, with what the caller may do with it.
+type NoteView struct {
+	Note
+	CanUpdate bool
+	CanDelete bool
+}
+
 type NoteCreate struct {
 	Title   string
 	Content string

@@ -8,12 +8,16 @@ import (
 	"syscall"
 	"time"
 
+	"api/gen/go/authz/v1/authzv1connect"
+	"core/authz"
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/jwtc"
 	"core/components/otelc"
 	"core/components/redisc"
+	"core/components/rpcc"
 	"core/di"
+	"core/outbox"
 	"core/sctx"
 	"iam/config"
 	"iam/internal/password"
@@ -39,6 +43,8 @@ func run() error {
 		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(migrations.FS))),
 		sctx.WithComponent(redisc.NewRedis(config.ComponentRedis, "")),
 		sctx.WithComponent(jwtc.NewSigner(config.ComponentJWT)),
+		// optional: sync memberships to the central authz service
+		sctx.WithComponent(rpcc.NewClient(config.ComponentAuthzClient, config.UpstreamAuthz, rpcc.Optional())),
 		// registered last so it is stopped first: drain HTTP, then close the rest
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
@@ -64,7 +70,13 @@ func run() error {
 
 	jwt := sctx.MustGetAs[jwtc.SignerComponent](sc, config.ComponentJWT)
 
-	c, err := buildContainer(deps{
+	var authzClient authzv1connect.AuthzServiceClient
+	if cc := sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentAuthzClient); cc.Enabled() {
+		authzClient = rpcc.New(cc, authzv1connect.NewAuthzServiceClient)
+	}
+	logger.Infof("membership sync to the authz service: %v", authzClient != nil)
+
+	d := deps{
 		db:     db,
 		redis:  sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client(),
 		signer: jwt.Signer(),
@@ -75,10 +87,20 @@ func run() error {
 		},
 		versionTTL: time.Hour,
 		logger:     sc.Logger("app"),
-	})
+		authz:      authzClient,
+	}
+	c, err := buildContainer(d)
 	if err != nil {
 		return err
 	}
+
+	// delivers outbox messages (membership tuples) after commit
+	relay := di.MustGet[*outbox.Outbox](c).NewRelay(db, sc.Logger("outbox"), outbox.RelayOptions{})
+	if authzClient != nil {
+		relay.Handle(authz.TuplesTopic, authz.DeliverTuples(d.writeTuples))
+	}
+	relay.Start()
+	defer relay.Stop() // runs before sc.Stop(): the database is still open
 
 	server := sctx.MustGetAs[ginc.GinComponent](sc, config.ComponentGin)
 	router := server.GetRouter()

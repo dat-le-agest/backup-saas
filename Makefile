@@ -1,4 +1,4 @@
-.PHONY: service test vet jwt-key up down down-v logs ps deps migration tools proto proto-lint proto-format proto-check proto-breaking
+.PHONY: service test vet jwt-key up down down-v logs ps deps migration authz-model authz-backfill tools proto proto-lint proto-format proto-check proto-breaking
 
 BIN := $(CURDIR)/.bin
 export PATH := $(BIN):$(PATH)
@@ -42,6 +42,16 @@ migration:
 	test -d "$$dir/migrations" || (echo "$$dir/migrations not found" && exit 1); \
 	f="$$dir/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$f" && echo "created $$f"
+
+# load deploy/authz/model.fga into the authz service as a new active version
+AUTHZ_URL ?= http://localhost:3002
+authz-model: $(BIN)/buf
+	@python3 -c 'import json; print(json.dumps({"dsl": open("deploy/authz/model.fga").read(), "activate": True}))' \
+	| $(BIN)/buf curl --schema api/proto --data @- $(AUTHZ_URL)/authz.v1.AuthzService/WriteAuthorizationModel
+
+# copy relationships of existing memberships and notes into the authz service
+authz-backfill:
+	./scripts/authz-backfill.sh
 
 # Ed25519 signing key for iam access tokens: make jwt-key out=services/iam/jwt.pem
 out ?= services/iam/jwt.pem

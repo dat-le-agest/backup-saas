@@ -69,3 +69,23 @@ func Public(err error) (status int, message string) {
 	}
 	return status, err.Error()
 }
+
+// FromCode is the reverse of Code: an error wrapping the sentinel of code
+// (unknown codes wrap none), with message, e.g. for errors reported per item in
+// a response rather than as the call's error.
+func FromCode(code, message string) error {
+	for _, m := range mappings {
+		if m.code == code {
+			return &codeError{sentinel: m.err, message: message}
+		}
+	}
+	return errors.New(message)
+}
+
+type codeError struct {
+	sentinel error
+	message  string
+}
+
+func (e *codeError) Error() string { return e.message }
+func (e *codeError) Unwrap() error { return e.sentinel }

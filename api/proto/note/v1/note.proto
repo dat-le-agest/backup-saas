@@ -28,6 +28,14 @@ message Note {
   google.protobuf.Timestamp update_time = 5;
   // User id of the creator. Members may only update/delete their own notes.
   string created_by = 6;
+  // What the caller may do with the note, e.g. to show or hide buttons.
+  // Set by GetNote and ListNotes. A hint: update and delete check again.
+  NotePermissions permissions = 7;
+}
+
+message NotePermissions {
+  bool can_update = 1;
+  bool can_delete = 2;
 }
 
 message CreateNoteRequest {

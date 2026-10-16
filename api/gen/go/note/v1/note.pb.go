@@ -30,7 +30,10 @@ type Note struct {
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
 	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
 	// User id of the creator. Members may only update/delete their own notes.
-	CreatedBy     string `protobuf:"bytes,6,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	CreatedBy string `protobuf:"bytes,6,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	// What the caller may do with the note, e.g. to show or hide buttons.
+	// Set by GetNote and ListNotes. A hint: update and delete check again.
+	Permissions   *NotePermissions `protobuf:"bytes,7,opt,name=permissions,proto3" json:"permissions,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -107,6 +110,65 @@ func (x *Note) GetCreatedBy() string {
 	return ""
 }
 
+func (x *Note) GetPermissions() *NotePermissions {
+	if x != nil {
+		return x.Permissions
+	}
+	return nil
+}
+
+type NotePermissions struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CanUpdate     bool                   `protobuf:"varint,1,opt,name=can_update,json=canUpdate,proto3" json:"can_update,omitempty"`
+	CanDelete     bool                   `protobuf:"varint,2,opt,name=can_delete,json=canDelete,proto3" json:"can_delete,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NotePermissions) Reset() {
+	*x = NotePermissions{}
+	mi := &file_note_v1_note_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NotePermissions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NotePermissions) ProtoMessage() {}
+
+func (x *NotePermissions) ProtoReflect() protoreflect.Message {
+	mi := &file_note_v1_note_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NotePermissions.ProtoReflect.Descriptor instead.
+func (*NotePermissions) Descriptor() ([]byte, []int) {
+	return file_note_v1_note_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *NotePermissions) GetCanUpdate() bool {
+	if x != nil {
+		return x.CanUpdate
+	}
+	return false
+}
+
+func (x *NotePermissions) GetCanDelete() bool {
+	if x != nil {
+		return x.CanDelete
+	}
+	return false
+}
+
 type CreateNoteRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Required. Trimmed, at most 255 characters.
@@ -118,7 +180,7 @@ type CreateNoteRequest struct {
 
 func (x *CreateNoteRequest) Reset() {
 	*x = CreateNoteRequest{}
-	mi := &file_note_v1_note_proto_msgTypes[1]
+	mi := &file_note_v1_note_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -130,7 +192,7 @@ func (x *CreateNoteRequest) String() string {
 func (*CreateNoteRequest) ProtoMessage() {}
 
 func (x *CreateNoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[1]
+	mi := &file_note_v1_note_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -143,7 +205,7 @@ func (x *CreateNoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNoteRequest.ProtoReflect.Descriptor instead.
 func (*CreateNoteRequest) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{1}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateNoteRequest) GetTitle() string {
@@ -169,7 +231,7 @@ type CreateNoteResponse struct {
 
 func (x *CreateNoteResponse) Reset() {
 	*x = CreateNoteResponse{}
-	mi := &file_note_v1_note_proto_msgTypes[2]
+	mi := &file_note_v1_note_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -181,7 +243,7 @@ func (x *CreateNoteResponse) String() string {
 func (*CreateNoteResponse) ProtoMessage() {}
 
 func (x *CreateNoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[2]
+	mi := &file_note_v1_note_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -194,7 +256,7 @@ func (x *CreateNoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNoteResponse.ProtoReflect.Descriptor instead.
 func (*CreateNoteResponse) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{2}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateNoteResponse) GetNote() *Note {
@@ -213,7 +275,7 @@ type GetNoteRequest struct {
 
 func (x *GetNoteRequest) Reset() {
 	*x = GetNoteRequest{}
-	mi := &file_note_v1_note_proto_msgTypes[3]
+	mi := &file_note_v1_note_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -225,7 +287,7 @@ func (x *GetNoteRequest) String() string {
 func (*GetNoteRequest) ProtoMessage() {}
 
 func (x *GetNoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[3]
+	mi := &file_note_v1_note_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -238,7 +300,7 @@ func (x *GetNoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNoteRequest.ProtoReflect.Descriptor instead.
 func (*GetNoteRequest) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{3}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetNoteRequest) GetId() uint64 {
@@ -257,7 +319,7 @@ type GetNoteResponse struct {
 
 func (x *GetNoteResponse) Reset() {
 	*x = GetNoteResponse{}
-	mi := &file_note_v1_note_proto_msgTypes[4]
+	mi := &file_note_v1_note_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -269,7 +331,7 @@ func (x *GetNoteResponse) String() string {
 func (*GetNoteResponse) ProtoMessage() {}
 
 func (x *GetNoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[4]
+	mi := &file_note_v1_note_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -282,7 +344,7 @@ func (x *GetNoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNoteResponse.ProtoReflect.Descriptor instead.
 func (*GetNoteResponse) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{4}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetNoteResponse) GetNote() *Note {
@@ -304,7 +366,7 @@ type ListNotesRequest struct {
 
 func (x *ListNotesRequest) Reset() {
 	*x = ListNotesRequest{}
-	mi := &file_note_v1_note_proto_msgTypes[5]
+	mi := &file_note_v1_note_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +378,7 @@ func (x *ListNotesRequest) String() string {
 func (*ListNotesRequest) ProtoMessage() {}
 
 func (x *ListNotesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[5]
+	mi := &file_note_v1_note_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,7 +391,7 @@ func (x *ListNotesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotesRequest.ProtoReflect.Descriptor instead.
 func (*ListNotesRequest) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{5}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListNotesRequest) GetPage() int32 {
@@ -358,7 +420,7 @@ type ListNotesResponse struct {
 
 func (x *ListNotesResponse) Reset() {
 	*x = ListNotesResponse{}
-	mi := &file_note_v1_note_proto_msgTypes[6]
+	mi := &file_note_v1_note_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -370,7 +432,7 @@ func (x *ListNotesResponse) String() string {
 func (*ListNotesResponse) ProtoMessage() {}
 
 func (x *ListNotesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[6]
+	mi := &file_note_v1_note_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -383,7 +445,7 @@ func (x *ListNotesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotesResponse.ProtoReflect.Descriptor instead.
 func (*ListNotesResponse) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{6}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListNotesResponse) GetNotes() []*Note {
@@ -426,7 +488,7 @@ type UpdateNoteRequest struct {
 
 func (x *UpdateNoteRequest) Reset() {
 	*x = UpdateNoteRequest{}
-	mi := &file_note_v1_note_proto_msgTypes[7]
+	mi := &file_note_v1_note_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -438,7 +500,7 @@ func (x *UpdateNoteRequest) String() string {
 func (*UpdateNoteRequest) ProtoMessage() {}
 
 func (x *UpdateNoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[7]
+	mi := &file_note_v1_note_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -451,7 +513,7 @@ func (x *UpdateNoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNoteRequest.ProtoReflect.Descriptor instead.
 func (*UpdateNoteRequest) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{7}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *UpdateNoteRequest) GetId() uint64 {
@@ -484,7 +546,7 @@ type UpdateNoteResponse struct {
 
 func (x *UpdateNoteResponse) Reset() {
 	*x = UpdateNoteResponse{}
-	mi := &file_note_v1_note_proto_msgTypes[8]
+	mi := &file_note_v1_note_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -496,7 +558,7 @@ func (x *UpdateNoteResponse) String() string {
 func (*UpdateNoteResponse) ProtoMessage() {}
 
 func (x *UpdateNoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[8]
+	mi := &file_note_v1_note_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -509,7 +571,7 @@ func (x *UpdateNoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNoteResponse.ProtoReflect.Descriptor instead.
 func (*UpdateNoteResponse) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{8}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *UpdateNoteResponse) GetNote() *Note {
@@ -528,7 +590,7 @@ type DeleteNoteRequest struct {
 
 func (x *DeleteNoteRequest) Reset() {
 	*x = DeleteNoteRequest{}
-	mi := &file_note_v1_note_proto_msgTypes[9]
+	mi := &file_note_v1_note_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -540,7 +602,7 @@ func (x *DeleteNoteRequest) String() string {
 func (*DeleteNoteRequest) ProtoMessage() {}
 
 func (x *DeleteNoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[9]
+	mi := &file_note_v1_note_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -553,7 +615,7 @@ func (x *DeleteNoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNoteRequest.ProtoReflect.Descriptor instead.
 func (*DeleteNoteRequest) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{9}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeleteNoteRequest) GetId() uint64 {
@@ -571,7 +633,7 @@ type DeleteNoteResponse struct {
 
 func (x *DeleteNoteResponse) Reset() {
 	*x = DeleteNoteResponse{}
-	mi := &file_note_v1_note_proto_msgTypes[10]
+	mi := &file_note_v1_note_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -583,7 +645,7 @@ func (x *DeleteNoteResponse) String() string {
 func (*DeleteNoteResponse) ProtoMessage() {}
 
 func (x *DeleteNoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_note_v1_note_proto_msgTypes[10]
+	mi := &file_note_v1_note_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -596,14 +658,14 @@ func (x *DeleteNoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNoteResponse.ProtoReflect.Descriptor instead.
 func (*DeleteNoteResponse) Descriptor() ([]byte, []int) {
-	return file_note_v1_note_proto_rawDescGZIP(), []int{10}
+	return file_note_v1_note_proto_rawDescGZIP(), []int{11}
 }
 
 var File_note_v1_note_proto protoreflect.FileDescriptor
 
 const file_note_v1_note_proto_rawDesc = "" +
 	"\n" +
-	"\x12note/v1/note.proto\x12\anote.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdf\x01\n" +
+	"\x12note/v1/note.proto\x12\anote.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9b\x02\n" +
 	"\x04Note\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x18\n" +
@@ -613,7 +675,13 @@ const file_note_v1_note_proto_rawDesc = "" +
 	"\vupdate_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"updateTime\x12\x1d\n" +
 	"\n" +
-	"created_by\x18\x06 \x01(\tR\tcreatedBy\"C\n" +
+	"created_by\x18\x06 \x01(\tR\tcreatedBy\x12:\n" +
+	"\vpermissions\x18\a \x01(\v2\x18.note.v1.NotePermissionsR\vpermissions\"O\n" +
+	"\x0fNotePermissions\x12\x1d\n" +
+	"\n" +
+	"can_update\x18\x01 \x01(\bR\tcanUpdate\x12\x1d\n" +
+	"\n" +
+	"can_delete\x18\x02 \x01(\bR\tcanDelete\"C\n" +
 	"\x11CreateNoteRequest\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\"7\n" +
@@ -666,43 +734,45 @@ func file_note_v1_note_proto_rawDescGZIP() []byte {
 	return file_note_v1_note_proto_rawDescData
 }
 
-var file_note_v1_note_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_note_v1_note_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_note_v1_note_proto_goTypes = []any{
 	(*Note)(nil),                  // 0: note.v1.Note
-	(*CreateNoteRequest)(nil),     // 1: note.v1.CreateNoteRequest
-	(*CreateNoteResponse)(nil),    // 2: note.v1.CreateNoteResponse
-	(*GetNoteRequest)(nil),        // 3: note.v1.GetNoteRequest
-	(*GetNoteResponse)(nil),       // 4: note.v1.GetNoteResponse
-	(*ListNotesRequest)(nil),      // 5: note.v1.ListNotesRequest
-	(*ListNotesResponse)(nil),     // 6: note.v1.ListNotesResponse
-	(*UpdateNoteRequest)(nil),     // 7: note.v1.UpdateNoteRequest
-	(*UpdateNoteResponse)(nil),    // 8: note.v1.UpdateNoteResponse
-	(*DeleteNoteRequest)(nil),     // 9: note.v1.DeleteNoteRequest
-	(*DeleteNoteResponse)(nil),    // 10: note.v1.DeleteNoteResponse
-	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*NotePermissions)(nil),       // 1: note.v1.NotePermissions
+	(*CreateNoteRequest)(nil),     // 2: note.v1.CreateNoteRequest
+	(*CreateNoteResponse)(nil),    // 3: note.v1.CreateNoteResponse
+	(*GetNoteRequest)(nil),        // 4: note.v1.GetNoteRequest
+	(*GetNoteResponse)(nil),       // 5: note.v1.GetNoteResponse
+	(*ListNotesRequest)(nil),      // 6: note.v1.ListNotesRequest
+	(*ListNotesResponse)(nil),     // 7: note.v1.ListNotesResponse
+	(*UpdateNoteRequest)(nil),     // 8: note.v1.UpdateNoteRequest
+	(*UpdateNoteResponse)(nil),    // 9: note.v1.UpdateNoteResponse
+	(*DeleteNoteRequest)(nil),     // 10: note.v1.DeleteNoteRequest
+	(*DeleteNoteResponse)(nil),    // 11: note.v1.DeleteNoteResponse
+	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_note_v1_note_proto_depIdxs = []int32{
-	11, // 0: note.v1.Note.create_time:type_name -> google.protobuf.Timestamp
-	11, // 1: note.v1.Note.update_time:type_name -> google.protobuf.Timestamp
-	0,  // 2: note.v1.CreateNoteResponse.note:type_name -> note.v1.Note
-	0,  // 3: note.v1.GetNoteResponse.note:type_name -> note.v1.Note
-	0,  // 4: note.v1.ListNotesResponse.notes:type_name -> note.v1.Note
-	0,  // 5: note.v1.UpdateNoteResponse.note:type_name -> note.v1.Note
-	1,  // 6: note.v1.NoteService.CreateNote:input_type -> note.v1.CreateNoteRequest
-	3,  // 7: note.v1.NoteService.GetNote:input_type -> note.v1.GetNoteRequest
-	5,  // 8: note.v1.NoteService.ListNotes:input_type -> note.v1.ListNotesRequest
-	7,  // 9: note.v1.NoteService.UpdateNote:input_type -> note.v1.UpdateNoteRequest
-	9,  // 10: note.v1.NoteService.DeleteNote:input_type -> note.v1.DeleteNoteRequest
-	2,  // 11: note.v1.NoteService.CreateNote:output_type -> note.v1.CreateNoteResponse
-	4,  // 12: note.v1.NoteService.GetNote:output_type -> note.v1.GetNoteResponse
-	6,  // 13: note.v1.NoteService.ListNotes:output_type -> note.v1.ListNotesResponse
-	8,  // 14: note.v1.NoteService.UpdateNote:output_type -> note.v1.UpdateNoteResponse
-	10, // 15: note.v1.NoteService.DeleteNote:output_type -> note.v1.DeleteNoteResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	12, // 0: note.v1.Note.create_time:type_name -> google.protobuf.Timestamp
+	12, // 1: note.v1.Note.update_time:type_name -> google.protobuf.Timestamp
+	1,  // 2: note.v1.Note.permissions:type_name -> note.v1.NotePermissions
+	0,  // 3: note.v1.CreateNoteResponse.note:type_name -> note.v1.Note
+	0,  // 4: note.v1.GetNoteResponse.note:type_name -> note.v1.Note
+	0,  // 5: note.v1.ListNotesResponse.notes:type_name -> note.v1.Note
+	0,  // 6: note.v1.UpdateNoteResponse.note:type_name -> note.v1.Note
+	2,  // 7: note.v1.NoteService.CreateNote:input_type -> note.v1.CreateNoteRequest
+	4,  // 8: note.v1.NoteService.GetNote:input_type -> note.v1.GetNoteRequest
+	6,  // 9: note.v1.NoteService.ListNotes:input_type -> note.v1.ListNotesRequest
+	8,  // 10: note.v1.NoteService.UpdateNote:input_type -> note.v1.UpdateNoteRequest
+	10, // 11: note.v1.NoteService.DeleteNote:input_type -> note.v1.DeleteNoteRequest
+	3,  // 12: note.v1.NoteService.CreateNote:output_type -> note.v1.CreateNoteResponse
+	5,  // 13: note.v1.NoteService.GetNote:output_type -> note.v1.GetNoteResponse
+	7,  // 14: note.v1.NoteService.ListNotes:output_type -> note.v1.ListNotesResponse
+	9,  // 15: note.v1.NoteService.UpdateNote:output_type -> note.v1.UpdateNoteResponse
+	11, // 16: note.v1.NoteService.DeleteNote:output_type -> note.v1.DeleteNoteResponse
+	12, // [12:17] is the sub-list for method output_type
+	7,  // [7:12] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_note_v1_note_proto_init() }
@@ -710,14 +780,14 @@ func file_note_v1_note_proto_init() {
 	if File_note_v1_note_proto != nil {
 		return
 	}
-	file_note_v1_note_proto_msgTypes[7].OneofWrappers = []any{}
+	file_note_v1_note_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_note_v1_note_proto_rawDesc), len(file_note_v1_note_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

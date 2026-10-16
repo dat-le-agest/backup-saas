@@ -25,13 +25,16 @@ import (
 type MemberService struct {
 	store  Store
 	uow    uow.UnitOfWork
+	rel    authz.Relationships
 	az     authz.Authorizer
 	cache  VersionCache
 	logger logger.Logger
 }
 
-func NewMemberService(store Store, u uow.UnitOfWork, az authz.Authorizer, cache VersionCache, l logger.Logger) *MemberService {
-	return &MemberService{store: store, uow: u, az: az, cache: cache, logger: l}
+// rel mirrors memberships as tenant:<id>#<role>@user:<id> tuples for the central
+// authz service, in the same transaction (outbox).
+func NewMemberService(store Store, u uow.UnitOfWork, az authz.Authorizer, rel authz.Relationships, cache VersionCache, l logger.Logger) *MemberService {
+	return &MemberService{store: store, uow: u, rel: rel, az: az, cache: cache, logger: l}
 }
 
 func (s *MemberService) List(ctx context.Context) ([]model.MemberView, error) {
@@ -113,7 +116,10 @@ func (s *MemberService) Add(ctx context.Context, ref MemberRef, role string) (*m
 		default:
 			return err
 		}
-		return s.store.SaveMembership(ctx, added)
+		if err := s.store.SaveMembership(ctx, added); err != nil {
+			return err
+		}
+		return s.rel.Write(ctx, roleTuple(added.TenantID, added.UserID, added.Role))
 	})
 	if err != nil {
 		return nil, err
@@ -147,8 +153,15 @@ func (s *MemberService) UpdateRole(ctx context.Context, userID, role string) (*m
 			return err
 		}
 
+		oldRole := target.Role
 		target.Role, target.Version = role, target.Version+1
-		return s.store.SaveMembership(ctx, target)
+		if err := s.store.SaveMembership(ctx, target); err != nil {
+			return err
+		}
+		// one atomic change on the authz service: never both roles, never none
+		return s.rel.Change(ctx,
+			[]authz.Tuple{roleTuple(target.TenantID, target.UserID, role)},
+			[]authz.Tuple{roleTuple(target.TenantID, target.UserID, oldRole)})
 	})
 	if err != nil {
 		return nil, err
@@ -197,7 +210,10 @@ func (s *MemberService) Remove(ctx context.Context, userID string) error {
 			return err
 		}
 		// sessions in this tenant end now, not when their refresh token expires
-		return s.store.RevokeRefreshTokensOf(ctx, target.TenantID, target.UserID)
+		if err := s.store.RevokeRefreshTokensOf(ctx, target.TenantID, target.UserID); err != nil {
+			return err
+		}
+		return s.rel.Delete(ctx, roleTuple(target.TenantID, target.UserID, target.Role))
 	})
 	if err != nil {
 		return err
@@ -265,4 +281,10 @@ func validateRole(role string) error {
 		return apperr.Invalid("role", "must be one of owner, admin, member, viewer")
 	}
 	return nil
+}
+
+// roleTuple: a membership as a relationship (type tenant in deploy/authz/model.fga,
+// whose relations are the role names).
+func roleTuple(tenantID, userID, role string) authz.Tuple {
+	return authz.Tuple{Object: "tenant:" + tenantID, Relation: role, Subject: "user:" + userID, TenantID: tenantID}
 }
