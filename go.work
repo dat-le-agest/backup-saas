@@ -1,0 +1,10 @@
+go 1.27.0
+
+use (
+	./api
+	./core
+	./services/gateway
+	./services/iam
+	./services/saas
+	./templates/service
+)

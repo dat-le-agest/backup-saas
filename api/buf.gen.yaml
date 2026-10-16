@@ -1,0 +1,20 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    # generated packages are imported as api/gen/go/<service>/<version>
+    - file_option: go_package_prefix
+      value: api/gen/go
+clean: true
+plugins:
+  # binaries are pinned and installed into ../.bin by `make tools`
+  - local: protoc-gen-go
+    out: gen/go
+    opt: paths=source_relative
+  - local: protoc-gen-connect-go
+    out: gen/go
+    opt:
+      - paths=source_relative
+      # handlers/clients take and return plain messages instead of connect.Request/Response;
+      # headers are still reachable through connect.CallInfoForHandlerContext(ctx)
+      - simple

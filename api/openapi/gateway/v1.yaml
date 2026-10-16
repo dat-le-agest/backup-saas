@@ -1,0 +1,588 @@
+openapi: 3.1.0
+info:
+  title: Gateway public API
+  version: 1.0.0
+  description: |
+    Public REST API served by the gateway. Each endpoint maps to an internal gRPC
+    contract in api/proto; the JSON shapes here are owned by the gateway (gateway/internal/dto).
+
+    Every response carries an `X-Request-Id` header. Send your own (8-64 chars of
+    `A-Za-z0-9._-`) to correlate logs; otherwise one is generated.
+
+    Sign up with `/v1/auth/register`, sign in with `/v1/auth/login` (email +
+    password). Unauthenticated `/v1/auth/*` endpoints are rate limited per client IP
+    (`429` with `Retry-After`); after 5 failed logins an email is locked for 15
+    minutes (`429`), whether or not it is registered.
+
+    Authentication: `Authorization: Bearer <access_token>`. Access tokens are short
+    lived (10 min); exchange the refresh token at `/v1/auth/refresh` for a new pair
+    (refresh tokens are single use). A token is either tenant-less (right after
+    login: only `/v1/tenants`, `/v1/me/tenants`, `/v1/auth/switch-tenant`) or
+    scoped to one tenant (`/v1/auth/switch-tenant`). When the caller's membership
+    changes (role change, removal), outstanding tokens get `401` immediately:
+    refresh to get a token with the new role.
+
+    All tenant resources belong to the caller's tenant. Resources of other tenants
+    are reported as `404 not_found`. Permissions by tenant role:
+
+    | role          | notes                                        |
+    |---------------|----------------------------------------------|
+    | owner, admin  | everything                                   |
+    | member        | create, read all, update/delete own notes    |
+    | viewer        | read all                                     |
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+  /v1/auth/register:
+    post:
+      summary: Create an account and sign in (tenant-less tokens)
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, minLength: 10, maxLength: 128, description: Must not be the email }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/User" }
+                      tokens: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /v1/auth/login:
+    post:
+      summary: Sign in with email and password
+      description: |
+        Every failure returns `401 invalid email or password`, whether the email
+        exists or not. Pass tenant_id to get a tenant-scoped token directly.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                tenant_id: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Tokens" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /v1/auth/change-password:
+    post:
+      summary: Change the caller's password
+      description: Ends every session of the user (all tenants); sign in again afterwards.
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 10, maxLength: 128 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /v1/me:
+    get:
+      summary: The calling user
+      operationId: getMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+  /v1/auth/dev-login:
+    post:
+      summary: Log in without credentials (dev environment only)
+      description: Not registered outside `APP_ENV=dev`. Creates a password-less user if needed. Returns a tenant-less token unless tenant_id is given.
+      operationId: devLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string, example: alice }
+                tenant_id: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Tokens" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/auth/refresh:
+    post:
+      summary: Exchange a refresh token for a new token pair
+      description: The refresh token is single use. Replaying a used one revokes the whole session.
+      operationId: refreshTokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshTokenRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/Tokens" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+  /v1/auth/logout:
+    post:
+      summary: Revoke the session of a refresh token
+      operationId: logout
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshTokenRequest" }
+      responses:
+        "204": { description: Logged out (also for unknown tokens) }
+  /v1/auth/switch-tenant:
+    post:
+      summary: Get a token pair scoped to one of the caller's tenants
+      operationId: switchTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id]
+              properties:
+                tenant_id: { type: string, example: tnt_b4fd66acc0eac487 }
+      responses:
+        "200": { $ref: "#/components/responses/Tokens" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/tenants:
+    post:
+      summary: Create a tenant; the caller becomes its owner
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 255, example: Acme }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Tenant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+  /v1/me/tenants:
+    get:
+      summary: Tenants the caller belongs to, with the caller's role
+      operationId: listMyTenants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/Tenant"
+                        - type: object
+                          properties:
+                            role: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+  /v1/members:
+    get:
+      summary: Members of the caller's tenant (any role)
+      operationId: listMembers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Add a member (owner, admin; only owners grant owner)
+      operationId: addMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Identify the user by user_id or email (exactly one). The user must exist.
+              required: [role]
+              properties:
+                user_id: { type: string, example: usr_665fcdd680cd6a10 }
+                email: { type: string, format: email, example: bob@example.com }
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "201": { $ref: "#/components/responses/MemberResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/members/{user_id}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      summary: Change a member's role
+      description: Owners and admins; only owners change owners or grant owner. The last owner can't be demoted.
+      operationId: updateMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "200": { $ref: "#/components/responses/MemberResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Remove a member, or leave the tenant (your own user_id)
+      description: Ends the member's sessions in this tenant immediately. The last owner can't be removed.
+      operationId: removeMember
+      responses:
+        "204": { description: Removed }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/notes:
+    post:
+      summary: Create a note
+      operationId: createNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateNoteRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      summary: List notes, newest first
+      operationId: listNotes
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteListResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/notes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NoteID"
+    get:
+      summary: Get a note
+      operationId: getNote
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      summary: Update a note
+      description: Omitted fields are left unchanged.
+      operationId: updateNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateNoteRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Delete a note
+      operationId: deleteNote
+      responses:
+        "204":
+          description: Deleted
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from /v1/auth/* (EdDSA-signed by iam).
+  parameters:
+    NoteID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+  schemas:
+    Role:
+      type: string
+      enum: [owner, admin, member, viewer]
+    TokenPair:
+      type: object
+      required: [token_type, access_token, access_token_expires_at, refresh_token, refresh_token_expires_at]
+      properties:
+        token_type: { type: string, enum: [Bearer] }
+        access_token: { type: string }
+        access_token_expires_at: { type: string, format: date-time }
+        refresh_token: { type: string, description: Opaque, single use }
+        refresh_token_expires_at: { type: string, format: date-time }
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    Tenant:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id: { type: string, example: tnt_b4fd66acc0eac487 }
+        name: { type: string, example: Acme }
+        created_at: { type: string, format: date-time }
+    User:
+      type: object
+      required: [id, email, created_at]
+      properties:
+        id: { type: string, example: usr_e4493843e35a9f4c }
+        email: { type: string, description: Empty for dev-login users }
+        created_at: { type: string, format: date-time }
+    Member:
+      type: object
+      required: [user_id, email, role, created_at, updated_at]
+      properties:
+        user_id: { type: string, example: usr_665fcdd680cd6a10 }
+        email: { type: string, example: bob@example.com }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Note:
+      type: object
+      required: [id, title, content, created_by, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64, example: 1 }
+        title: { type: string, maxLength: 255, example: Groceries }
+        content: { type: string, example: milk, eggs }
+        created_by: { type: string, description: User id of the creator, example: u1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateNoteRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255, description: Trimmed before saving }
+        content: { type: string }
+    UpdateNoteRequest:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        content: { type: string }
+    Paging:
+      type: object
+      required: [page, limit, total]
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        total: { type: integer, format: int64, example: 42 }
+    NoteResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/Note" }
+    NoteListResponse:
+      type: object
+      required: [data, paging]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Note" }
+        paging: { $ref: "#/components/schemas/Paging" }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable code (core/apperr.Code)
+              enum:
+                - invalid_input
+                - not_found
+                - already_exists
+                - unauthenticated
+                - forbidden
+                - too_many_requests
+                - unavailable
+                - timeout
+                - internal
+            message:
+              type: string
+              description: Human-readable; 5xx messages are generic
+            request_id:
+              type: string
+  responses:
+    Tokens:
+      description: New token pair
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: "#/components/schemas/TokenPair" }
+    MemberResponse:
+      description: The member
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: "#/components/schemas/Member" }
+    TooManyRequests:
+      description: Rate limited (per IP) or email temporarily locked after failed logins
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds (per-IP limit only)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Already exists
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: invalid_input, message: "invalid input: title is required", request_id: 3f2a9c1e7b8d4e6fa0b1c2d3e4f5a6b7 } }
+    Unauthenticated:
+      description: Missing, invalid or expired token, or the membership changed (refresh the token)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Role not allowed, or no tenant selected
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: forbidden, message: "forbidden: role \"member\" can only update own note", request_id: 3f2a9c1e7b8d4e6fa0b1c2d3e4f5a6b7 } }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error:
+      description: "Other errors: 503 unavailable (upstream down), 504 timeout, 500 internal"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

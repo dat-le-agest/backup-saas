@@ -1,0 +1,118 @@
+// Grafana Alloy: the single collection point of the stack.
+//
+//   services --OTLP--> otelcol.receiver.otlp --> traces  --> Tempo
+//                                             --> metrics --> Prometheus (remote write)
+//   container stdout (zap JSON) --> loki.source.docker --> parse --> Loki
+//
+// UI: http://localhost:12345
+
+// ---- OTLP: traces + metrics from the services (core/components/otelc) ----
+
+otelcol.receiver.otlp "default" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    metrics = [otelcol.exporter.prometheus.default.input]
+    logs    = [otelcol.exporter.loki.default.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls { insecure = true }
+  }
+}
+
+// OTLP metrics → Prometheus naming (http.server.request.duration → http_server_request_duration_seconds);
+// service.name becomes the "job" label
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.default.receiver]
+}
+
+// ---- Logs: stdout of the application containers ----
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "app_containers" {
+  targets = discovery.docker.containers.targets
+
+  // only the application services of this compose project
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "saas"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "iam|note|gateway"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.app_containers.output
+  forward_to = [loki.process.zap_json.receiver]
+}
+
+// zap writes one JSON object per line: index the level as a label, keep ids as
+// structured metadata (high cardinality, but searchable and linkable to Tempo)
+loki.process "zap_json" {
+  stage.json {
+    expressions = {
+      level      = "level",
+      trace_id   = "trace_id",
+      request_id = "request_id",
+      component  = "prefix",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level     = "",
+      component = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      trace_id   = "",
+      request_id = "",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
