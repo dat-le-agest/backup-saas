@@ -56,7 +56,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{job=~\"gateway|notes-gateway\"}[$__rate_interval]))"
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=~\"$app/.*gateway\"}[$__rate_interval]))"
         }
       ]
     },
@@ -92,7 +92,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum(rate(http_server_request_duration_seconds_count{job=~\"gateway|notes-gateway\",http_response_status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{job=~\"gateway|notes-gateway\"}[$__rate_interval]))"
+          "expr": "(sum(rate(http_server_request_duration_seconds_count{job=~\"$app/.*gateway\",http_response_status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{job=~\"$app/.*gateway\"}[$__rate_interval]))"
         }
       ]
     },
@@ -128,7 +128,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=~\"gateway|notes-gateway\"}[$__rate_interval])))"
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=~\"$app/.*gateway\"}[$__rate_interval])))"
         }
       ]
     },
@@ -164,7 +164,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{job=~\"gateway|notes-gateway\",http_response_status_code=~\"4..\"}[$__rate_interval]))"
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=~\"$app/.*gateway\",http_response_status_code=~\"4..\"}[$__rate_interval]))"
         }
       ]
     },
@@ -203,7 +203,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job, http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{job=~\"gateway|notes-gateway\"}[$__rate_interval]))",
+          "expr": "sum by (job, http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{job=~\"$app/.*gateway\"}[$__rate_interval]))",
           "legendFormat": "{{http_route}} {{http_response_status_code}}"
         }
       ]
@@ -243,7 +243,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, job, http_route) (rate(http_server_request_duration_seconds_bucket{job=~\"gateway|notes-gateway\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, job, http_route) (rate(http_server_request_duration_seconds_bucket{job=~\"$app/.*gateway\"}[$__rate_interval])))",
           "legendFormat": "{{http_route}}"
         }
       ]
@@ -295,7 +295,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job, rpc_method, rpc_response_status_code) (rate(rpc_server_call_duration_seconds_count[$__rate_interval]))",
+          "expr": "sum by (job, rpc_method, rpc_response_status_code) (rate(rpc_server_call_duration_seconds_count{job=~\"$app/.*\"}[$__rate_interval]))",
           "legendFormat": "{{rpc_method}} {{rpc_response_status_code}}"
         }
       ]
@@ -335,7 +335,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, rpc_method) (rate(rpc_server_call_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, rpc_method) (rate(rpc_server_call_duration_seconds_bucket{job=~\"$app/.*\"}[$__rate_interval])))",
           "legendFormat": "{{rpc_method}}"
         }
       ]
@@ -387,7 +387,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (result) (rate(iam_auth_logins_total[$__rate_interval]))",
+          "expr": "sum by (result) (rate(iam_auth_logins_total{job=~\"$app/.*\"}[$__rate_interval]))",
           "legendFormat": "{{result}}"
         }
       ]
@@ -424,7 +424,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(iam_auth_refresh_token_reuse_total[$__range])) or vector(0)"
+          "expr": "sum(increase(iam_auth_refresh_token_reuse_total{job=~\"$app/.*\"}[$__range])) or vector(0)"
         }
       ]
     },
@@ -460,7 +460,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(iam_auth_registrations_total[$__range])) or vector(0)"
+          "expr": "sum(increase(iam_auth_registrations_total{job=~\"$app/.*\"}[$__range])) or vector(0)"
         }
       ]
     },
@@ -496,7 +496,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(notes_created_total[$__range])) or vector(0)"
+          "expr": "sum(increase(notes_created_total{job=~\"$app/.*\"}[$__range])) or vector(0)"
         }
       ]
     },
@@ -547,7 +547,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job) (go_goroutine_count)",
+          "expr": "sum by (job) (go_goroutine_count{job=~\"$app/.*\"})",
           "legendFormat": "{{job}}"
         }
       ]
@@ -587,7 +587,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job) (go_memory_used_bytes)",
+          "expr": "sum by (job) (go_memory_used_bytes{job=~\"$app/.*\"})",
           "legendFormat": "{{job}}"
         }
       ]
@@ -627,7 +627,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job) (go_sql_connections_in_use)",
+          "expr": "sum by (job) (go_sql_connections_in_use{job=~\"$app/.*\"})",
           "legendFormat": "{{job}}"
         }
       ]
@@ -657,9 +657,42 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service_name=~\"gateway|notes-gateway|iam|authz|note\", level=~\"warn|error\"}"
+          "expr": "{app=~\"$app\", level=~\"warn|error\"}"
         }
       ]
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "label": "App",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(go_goroutine_count, job)",
+          "refId": "app"
+        },
+        "definition": "label_values(go_goroutine_count, job)",
+        "regex": "/^([^/]+)\\//",
+        "includeAll": true,
+        "allValue": ".+",
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  }
 }

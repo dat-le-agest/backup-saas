@@ -117,10 +117,11 @@ cat <<EOF
 ✓ service '$NAME' created at $REL/
 
 Next steps:
-  1. give it a database: add a role + database to deploy/postgres/init.sql
-     (or create them by hand) and set DB_DSN in $REL/.env.example
+  1. give it a database: add a role + database to apps/$APP/deploy/db-init.sql
+     (idempotent, see the existing statements) and set DB_DSN in $REL/.env.example
   2. cd $REL && cp .env.example .env && go run ./cmd/server
-  3. to run it in the stack: add it to deploy/compose.yaml (SERVICE: $REL)
+  3. to run it in the stack: add it to apps/$APP/compose.yaml (SERVICE: $REL,
+     label saas.app: $APP, OTEL_RESOURCE_ATTRIBUTES: service.namespace=$APP)
 
 The 'note' module is an example: rename or remove it in
   internal/{model,service,repository,transport} and cmd/server/{container.go,main.go}

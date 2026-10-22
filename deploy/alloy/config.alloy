@@ -2,7 +2,7 @@
 //
 //   services --OTLP--> otelcol.receiver.otlp --> traces  --> Tempo
 //                                             --> metrics --> Prometheus (remote write)
-//   container stdout (zap JSON) --> loki.source.docker --> parse --> Loki
+//   container stdout (zap JSON, label saas.app) --> loki.source.docker --> parse --> Loki
 //
 // UI: http://localhost:12345
 
@@ -59,16 +59,21 @@ discovery.docker "containers" {
 discovery.relabel "app_containers" {
   targets = discovery.docker.containers.targets
 
-  // only the application services of this compose project
+  // only the application services of this compose project: the ones labelled
+  // saas.app (platform or an app name), set by every service in the compose files
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
     regex         = "saas"
     action        = "keep"
   }
   rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "iam|authz|gateway|note|notes-gateway"
+    source_labels = ["__meta_docker_container_label_saas_app"]
+    regex         = ".+"
     action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_saas_app"]
+    target_label  = "app"
   }
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]

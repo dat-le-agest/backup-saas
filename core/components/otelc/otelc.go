@@ -7,6 +7,8 @@
 //
 //	OTEL_EXPORTER_OTLP_ENDPOINT  e.g. http://alloy:4317; empty disables export
 //	OTEL_SERVICE_NAME            defaults to the service context name
+//	OTEL_RESOURCE_ATTRIBUTES     extra resource attributes, e.g. service.namespace=notes
+//	                             (the app a service belongs to; Prometheus job becomes notes/<service>)
 //	OTEL_TRACES_SAMPLER_ARG      ratio of new traces to sample (0..1), default 1
 //	OTEL_METRIC_EXPORT_INTERVAL  milliseconds, default 15000
 //

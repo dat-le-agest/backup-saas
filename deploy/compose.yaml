@@ -1,170 +1,17 @@
-# Local stack: services + Postgres + Redis + observability (Alloy → Tempo / Prometheus / Loki → Grafana).
+# Local stack: the platform plus every app.
 #
 #   make up      build and start everything
 #   make down    stop (keeps data volumes; make down-v removes them)
 #
 #   gateway  http://localhost:8080 (platform: auth, tenants, members)
 #   notes    http://localhost:8081 (notes app)
-#   postgres localhost:5432 (iam/iam, note/note; superuser postgres/postgres)
+#   postgres localhost:5432 (iam/iam, authz/authz, note/note; superuser postgres/postgres)
 #   grafana  http://localhost:3030   (no login)
 #   alloy    http://localhost:12345  (pipeline UI)
+#
+# A new app adds its own compose file (apps/<app>/compose.yaml) to the list below.
 name: saas
 
-x-service: &service
-  restart: unless-stopped
-  depends_on:
-    postgres: { condition: service_healthy }
-    redis: { condition: service_started }
-    alloy: { condition: service_started }
-  environment: &service-env
-    APP_ENV: dev # enables /v1/auth/dev-login and an ephemeral JWT key
-    LOG_LEVEL: info
-    REDIS_URL: redis://redis:6379/0
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
-    OTEL_METRIC_EXPORT_INTERVAL: "10000"
-
-services:
-  iam:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/iam } }
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: iam
-      GIN_PORT: "3001"
-      AUTHZ_SERVICE_URL: http://authz:3002 # sync memberships to the authz service
-      DB_DSN: postgres://iam:iam@postgres:5432/iam?sslmode=disable
-
-  # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
-  authz:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/authz } }
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: authz
-      GIN_PORT: "3002"
-      DB_DSN: postgres://authz:authz@postgres:5432/authz?sslmode=disable
-
-  # notes app: the note service (scaffolded from templates/service)
-  note:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: apps/notes/services/note } }
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: note
-      GIN_PORT: "3000"
-      AUTHZ_SERVICE_URL: http://authz:3002 # sync note relationships to the authz service
-      AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-model + make authz-backfill
-      DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
-
-  # notes app: public REST of the notes app (every route needs an access token)
-  notes-gateway:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: apps/notes/gateway } }
-    depends_on: [redis, alloy, iam, note]
-    # no database
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: notes-gateway
-      GIN_PORT: "8081"
-      JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
-      IAM_SERVICE_URL: http://iam:3001
-      NOTE_SERVICE_URL: http://note:3000
-    ports: ["8081:8081"]
-
-  # platform: sign-in, tokens, tenants and members (iam)
-  gateway:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/gateway } }
-    depends_on: [redis, alloy, iam]
-    container_name: gateway
-    # no database
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: gateway
-      GIN_PORT: "8080"
-      JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
-      IAM_SERVICE_URL: http://iam:3001
-    ports: ["8080:8080"]
-
-  postgres:
-    container_name: postgres
-    image: postgres:18.6-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    volumes:
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - postgres-data:/var/lib/postgresql
-    ports: ["5432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'authz'\" | grep -q 1"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
-  redis:
-    container_name: redis
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports: ["6379:6379"]
-
-  alloy:
-    image: grafana/alloy:v1.20.1
-    restart: unless-stopped
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - --storage.path=/var/lib/alloy/data
-      - /etc/alloy/config.alloy
-    volumes:
-      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports: ["12345:12345"]
-    depends_on: [tempo, loki, prometheus]
-
-  tempo:
-    image: grafana/tempo:2.10.8
-    restart: unless-stopped
-    user: "0" # writes to a named volume
-    command: ["-config.file=/etc/tempo.yaml"]
-    volumes:
-      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
-      - tempo-data:/var/tempo
-
-  loki:
-    image: grafana/loki:3.7.8
-    restart: unless-stopped
-    command: ["-config.file=/etc/loki/local-config.yaml"]
-    volumes: [loki-data:/loki]
-
-  prometheus:
-    image: prom/prometheus:v3.15.0
-    restart: unless-stopped
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --web.enable-remote-write-receiver
-      - --enable-feature=exemplar-storage
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-
-  grafana:
-    image: grafana/grafana:13.2.4
-    restart: unless-stopped
-    environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports: ["3030:3000"]
-    depends_on: [prometheus, tempo, loki]
-
-volumes:
-  postgres-data:
-  tempo-data:
-  loki-data:
-  prometheus-data:
+include:
+  - platform.compose.yaml
+  - ../apps/notes/compose.yaml
