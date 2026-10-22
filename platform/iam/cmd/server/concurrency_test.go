@@ -8,7 +8,7 @@ import (
 
 	iamv1 "api/gen/go/platform/iam/v1"
 	"core/apperr"
-	"core/authz"
+	"sdk/authz"
 )
 
 // parallel runs fn n times at once and returns the errors.

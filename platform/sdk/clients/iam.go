@@ -1,4 +1,5 @@
-package client
+// Package clients builds clients for the platform services, for gateways and app services.
+package clients
 
 import (
 	"api/gen/go/platform/iam/v1/iamv1connect"

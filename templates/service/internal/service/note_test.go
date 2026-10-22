@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"core/apperr"
-	"core/authz"
 	"core/reqctx"
 	"core/uow"
+	"sdk/authz"
 	"template/internal/model"
 )
 

@@ -9,7 +9,7 @@ import (
 
 	"core/apperr"
 	"core/reqctx"
-	"core/token"
+	"sdk/token"
 )
 
 // MembershipVersions returns the current version of a membership,

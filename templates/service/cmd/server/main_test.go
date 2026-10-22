@@ -16,8 +16,6 @@ import (
 	authzv1 "api/gen/go/platform/authz/v1"
 	"api/gen/go/platform/authz/v1/authzv1connect"
 	"core/apperr"
-	"core/authz"
-	"core/components/authzc"
 	"core/di"
 	zaplogger "core/logger/zap"
 	"core/outbox"
@@ -25,6 +23,8 @@ import (
 	"core/rpc"
 	"core/testdb"
 	"core/uow"
+	"sdk/authz"
+	"sdk/components/authzc"
 	grpctransport "template/internal/transport/rpc"
 	"template/migrations"
 

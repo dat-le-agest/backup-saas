@@ -1,4 +1,4 @@
-// Package dto holds the public JSON shapes of the gateway and their mapping
+// Package dto holds the public JSON shapes of the notes gateway and their mapping
 // to/from upstream proto messages. Proto types never reach the client directly,
 // so the public API stays stable when internal contracts evolve.
 package dto

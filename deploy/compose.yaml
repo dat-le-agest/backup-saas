@@ -3,7 +3,8 @@
 #   make up      build and start everything
 #   make down    stop (keeps data volumes; make down-v removes them)
 #
-#   gateway  http://localhost:8080
+#   gateway  http://localhost:8080 (platform: auth, tenants, members)
+#   notes    http://localhost:8081 (notes app)
 #   postgres localhost:5432 (iam/iam, note/note; superuser postgres/postgres)
 #   grafana  http://localhost:3030   (no login)
 #   alloy    http://localhost:12345  (pipeline UI)
@@ -55,10 +56,26 @@ services:
       AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-model + make authz-backfill
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
 
+  # notes app: public REST of the notes app (every route needs an access token)
+  notes-gateway:
+    <<: *service
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: apps/notes/gateway } }
+    depends_on: [redis, alloy, iam, note]
+    # no database
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: notes-gateway
+      GIN_PORT: "8081"
+      JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
+      IAM_SERVICE_URL: http://iam:3001
+      NOTE_SERVICE_URL: http://note:3000
+    ports: ["8081:8081"]
+
+  # platform: sign-in, tokens, tenants and members (iam)
   gateway:
     <<: *service
     build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/gateway } }
-    depends_on: [redis, alloy, iam, note]
+    depends_on: [redis, alloy, iam]
     container_name: gateway
     # no database
     environment:
@@ -67,7 +84,6 @@ services:
       GIN_PORT: "8080"
       JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
       IAM_SERVICE_URL: http://iam:3001
-      NOTE_SERVICE_URL: http://note:3000
     ports: ["8080:8080"]
 
   postgres:

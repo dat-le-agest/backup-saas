@@ -1,10 +1,13 @@
 openapi: 3.1.0
 info:
-  title: Gateway public API
+  title: Platform API
   version: 1.0.0
   description: |
-    Public REST API served by the gateway. Each endpoint maps to an internal gRPC
-    contract in api/proto; the JSON shapes here are owned by the gateway (gateway/internal/dto).
+    Public REST API of the platform gateway (platform/gateway): sign-in, tokens,
+    tenants and members. Each endpoint maps to the iam gRPC contract in
+    api/proto/platform/iam; the JSON shapes are owned by the gateway (internal/dto).
+    App APIs (e.g. api/openapi/apps/notes/v1.yaml) are served by their own gateways
+    and accept the access tokens issued here.
 
     Every response carries an `X-Request-Id` header. Send your own (8-64 chars of
     `A-Za-z0-9._-`) to correlate logs; otherwise one is generated.
@@ -22,14 +25,7 @@ info:
     changes (role change, removal), outstanding tokens get `401` immediately:
     refresh to get a token with the new role.
 
-    All tenant resources belong to the caller's tenant. Resources of other tenants
-    are reported as `404 not_found`. Permissions by tenant role:
-
-    | role          | notes                                        |
-    |---------------|----------------------------------------------|
-    | owner, admin  | everything                                   |
-    | member        | create, read all, update/delete own notes    |
-    | viewer        | read all                                     |
+    Tenant-scoped endpoints (`/v1/members`) act on the caller's tenant.
 servers:
   - url: http://localhost:8080
 security:
@@ -320,93 +316,6 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /v1/notes:
-    post:
-      summary: Create a note
-      operationId: createNote
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateNoteRequest" }
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NoteResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        default: { $ref: "#/components/responses/Error" }
-    get:
-      summary: List notes, newest first
-      operationId: listNotes
-      parameters:
-        - name: page
-          in: query
-          schema: { type: integer, minimum: 1, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NoteListResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        default: { $ref: "#/components/responses/Error" }
-  /v1/notes/{id}:
-    parameters:
-      - $ref: "#/components/parameters/NoteID"
-    get:
-      summary: Get a note
-      operationId: getNote
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NoteResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        default: { $ref: "#/components/responses/Error" }
-    patch:
-      summary: Update a note
-      description: Omitted fields are left unchanged.
-      operationId: updateNote
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/UpdateNoteRequest" }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NoteResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        default: { $ref: "#/components/responses/Error" }
-    delete:
-      summary: Delete a note
-      operationId: deleteNote
-      responses:
-        "204":
-          description: Deleted
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -414,12 +323,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Access token from /v1/auth/* (EdDSA-signed by iam).
-  parameters:
-    NoteID:
-      name: id
-      in: path
-      required: true
-      schema: { type: integer, format: int64, minimum: 1 }
   schemas:
     Role:
       type: string
@@ -461,47 +364,6 @@ components:
         role: { $ref: "#/components/schemas/Role" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
-    Note:
-      type: object
-      required: [id, title, content, created_by, created_at, updated_at]
-      properties:
-        id: { type: integer, format: int64, example: 1 }
-        title: { type: string, maxLength: 255, example: Groceries }
-        content: { type: string, example: milk, eggs }
-        created_by: { type: string, description: User id of the creator, example: u1 }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-    CreateNoteRequest:
-      type: object
-      required: [title]
-      properties:
-        title: { type: string, minLength: 1, maxLength: 255, description: Trimmed before saving }
-        content: { type: string }
-    UpdateNoteRequest:
-      type: object
-      properties:
-        title: { type: string, minLength: 1, maxLength: 255 }
-        content: { type: string }
-    Paging:
-      type: object
-      required: [page, limit, total]
-      properties:
-        page: { type: integer, example: 1 }
-        limit: { type: integer, example: 20 }
-        total: { type: integer, format: int64, example: 42 }
-    NoteResponse:
-      type: object
-      required: [data]
-      properties:
-        data: { $ref: "#/components/schemas/Note" }
-    NoteListResponse:
-      type: object
-      required: [data, paging]
-      properties:
-        data:
-          type: array
-          items: { $ref: "#/components/schemas/Note" }
-        paging: { $ref: "#/components/schemas/Paging" }
     Error:
       type: object
       required: [error]
@@ -578,11 +440,6 @@ components:
           example: { error: { code: forbidden, message: "forbidden: role \"member\" can only update own note", request_id: 3f2a9c1e7b8d4e6fa0b1c2d3e4f5a6b7 } }
     NotFound:
       description: Resource not found
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    Error:
-      description: "Other errors: 503 unavailable (upstream down), 504 timeout, 500 internal"
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"core/components/ginc"
-	"core/components/jwtc"
 	"core/components/otelc"
 	"core/components/redisc"
 	"core/components/rpcc"
 	"core/sctx"
 	"gateway/config"
-	"gateway/internal/authn"
-	"gateway/internal/client"
+	"sdk/authn"
+	"sdk/clients"
+	"sdk/components/jwtc"
 )
 
 // membership versions cached in Redis must outlive the access tokens they protect
@@ -36,7 +36,6 @@ func run() error {
 		sctx.WithComponent(jwtc.NewVerifier(config.ComponentJWT)),
 		sctx.WithComponent(redisc.NewRedis(config.ComponentRedis, "")),
 		sctx.WithComponent(rpcc.NewClient(config.ComponentIamClient, config.UpstreamIam)),
-		sctx.WithComponent(rpcc.NewClient(config.ComponentNoteClient, config.UpstreamNote)),
 		// registered last so it is stopped first: stop taking requests, then close clients
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
@@ -52,8 +51,7 @@ func run() error {
 		}
 	}()
 
-	iam := client.NewIam(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentIamClient))
-	notes := client.NewNote(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentNoteClient))
+	iam := clients.NewIam(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentIamClient))
 
 	auth := authn.NewJWTAuthenticator(
 		sctx.MustGetAs[jwtc.VerifierComponent](sc, config.ComponentJWT).Verifier(),
@@ -63,7 +61,7 @@ func run() error {
 		),
 	)
 
-	c, err := buildContainer(notes, iam)
+	c, err := buildContainer(iam)
 	if err != nil {
 		return err
 	}

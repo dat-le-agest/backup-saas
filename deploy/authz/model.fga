@@ -4,7 +4,7 @@ model
 # Platform-wide authorization model of the central authz service.
 # Load it with: make authz-model   (stores a new version and activates it)
 #
-# Naming convention (core/authz.DefaultRelations):
+# Naming convention (sdk/authz.DefaultRelations, platform/sdk/authz):
 #   object-level  Check(action, {Type: t, ID: id})  →  t:id#can_<action>
 #   type-level    Check(action, {Type: t})          →  tenant:<tenant>#can_<action>_<t>
 #

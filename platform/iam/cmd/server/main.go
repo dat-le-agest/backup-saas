@@ -9,10 +9,8 @@ import (
 	"time"
 
 	"api/gen/go/platform/authz/v1/authzv1connect"
-	"core/authz"
 	"core/components/ginc"
 	"core/components/gormc"
-	"core/components/jwtc"
 	"core/components/otelc"
 	"core/components/redisc"
 	"core/components/rpcc"
@@ -24,6 +22,8 @@ import (
 	"iam/internal/service"
 	grpctransport "iam/internal/transport/rpc"
 	"iam/migrations"
+	"sdk/authz"
+	"sdk/components/jwtc"
 
 	"github.com/gin-gonic/gin"
 )

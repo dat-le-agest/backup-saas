@@ -7,6 +7,7 @@ import (
 	"api/gen/go/platform/iam/v1/iamv1connect"
 	"core/response"
 	"gateway/internal/dto"
+	"sdk/httpx"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,7 +53,7 @@ func (h *IamHandler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *IamHandler) register(c *gin.Context) {
 	var body dto.RegisterRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.Register(c.Request.Context(), &iamv1.RegisterRequest{Email: body.Email, Password: body.Password})
@@ -68,7 +69,7 @@ func (h *IamHandler) register(c *gin.Context) {
 
 func (h *IamHandler) login(c *gin.Context) {
 	var body dto.LoginRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.Login(c.Request.Context(), &iamv1.LoginRequest{
@@ -83,7 +84,7 @@ func (h *IamHandler) login(c *gin.Context) {
 
 func (h *IamHandler) changePassword(c *gin.Context) {
 	var body dto.ChangePasswordRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	_, err := h.iam.ChangePassword(c.Request.Context(), &iamv1.ChangePasswordRequest{
@@ -107,7 +108,7 @@ func (h *IamHandler) me(c *gin.Context) {
 
 func (h *IamHandler) devLogin(c *gin.Context) {
 	var body dto.DevLoginRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.DevLogin(c.Request.Context(), &iamv1.DevLoginRequest{UserId: body.UserID, TenantId: body.TenantID})
@@ -120,7 +121,7 @@ func (h *IamHandler) devLogin(c *gin.Context) {
 
 func (h *IamHandler) refresh(c *gin.Context) {
 	var body dto.RefreshRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.RefreshTokens(c.Request.Context(), &iamv1.RefreshTokensRequest{RefreshToken: body.RefreshToken})
@@ -133,7 +134,7 @@ func (h *IamHandler) refresh(c *gin.Context) {
 
 func (h *IamHandler) logout(c *gin.Context) {
 	var body dto.RefreshRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	if _, err := h.iam.RevokeRefreshToken(c.Request.Context(), &iamv1.RevokeRefreshTokenRequest{RefreshToken: body.RefreshToken}); err != nil {
@@ -145,7 +146,7 @@ func (h *IamHandler) logout(c *gin.Context) {
 
 func (h *IamHandler) switchTenant(c *gin.Context) {
 	var body dto.SwitchTenantRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.SwitchTenant(c.Request.Context(), &iamv1.SwitchTenantRequest{TenantId: body.TenantID})
@@ -167,7 +168,7 @@ func (h *IamHandler) myTenants(c *gin.Context) {
 
 func (h *IamHandler) createTenant(c *gin.Context) {
 	var body dto.CreateTenantRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.CreateTenant(c.Request.Context(), &iamv1.CreateTenantRequest{Name: body.Name})
@@ -189,7 +190,7 @@ func (h *IamHandler) listMembers(c *gin.Context) {
 
 func (h *IamHandler) addMember(c *gin.Context) {
 	var body dto.AddMemberRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.AddMember(c.Request.Context(), &iamv1.AddMemberRequest{UserId: body.UserID, Email: body.Email, Role: body.Role})
@@ -202,7 +203,7 @@ func (h *IamHandler) addMember(c *gin.Context) {
 
 func (h *IamHandler) updateMember(c *gin.Context) {
 	var body dto.UpdateMemberRequest
-	if !bindJSON(c, &body) {
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	res, err := h.iam.UpdateMemberRole(c.Request.Context(), &iamv1.UpdateMemberRoleRequest{UserId: c.Param("user_id"), Role: body.Role})
@@ -219,12 +220,4 @@ func (h *IamHandler) removeMember(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
-}
-
-func bindJSON(c *gin.Context, v any) bool {
-	if err := c.ShouldBindJSON(v); err != nil {
-		response.Fail(c, errInvalidBody)
-		return false
-	}
-	return true
 }

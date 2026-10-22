@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"core/apperr"
-	"core/authz"
 	"core/reqctx"
 	"core/uow"
 	"note/internal/model"
+	"sdk/authz"
 )
 
 // fakeRepo stores notes in memory and records writes. Tenant scoping is the real

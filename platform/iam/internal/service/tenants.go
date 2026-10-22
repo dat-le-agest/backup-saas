@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"core/apperr"
-	"core/authz"
 	"core/reqctx"
 	"core/uow"
 	"iam/internal/model"
+	"sdk/authz"
 )
 
 type TenantService struct {

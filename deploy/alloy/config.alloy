@@ -67,7 +67,7 @@ discovery.relabel "app_containers" {
   }
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "iam|note|gateway|authz"
+    regex         = "iam|authz|gateway|note|notes-gateway"
     action        = "keep"
   }
   rule {

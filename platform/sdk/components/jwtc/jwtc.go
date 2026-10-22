@@ -1,4 +1,4 @@
-// Package jwtc provides sctx components for access tokens (core/token):
+// Package jwtc provides sctx components for access tokens (sdk/token):
 //
 //	iam:     jwtc.NewSigner("jwt")    flags --jwt-private-key-file, --jwt-issuer, --jwt-audience, --jwt-access-ttl
 //	gateway: jwtc.NewVerifier("jwt")  flags --jwt-jwks-url, --jwt-issuer, --jwt-audience
@@ -8,12 +8,12 @@ import (
 	"context"
 	"core/logger"
 	"core/sctx"
-	"core/token"
 	"errors"
 	"flag"
 	"fmt"
 	"net/url"
 	"os"
+	"sdk/token"
 	"time"
 )
 

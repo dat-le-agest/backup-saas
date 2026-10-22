@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"core/authz"
 	"core/logger"
 	"core/outbox"
 	"core/testdb"
 	"core/uow"
+	"sdk/authz"
 )
 
 func TestRelationshipsGoThroughTheOutbox(t *testing.T) {

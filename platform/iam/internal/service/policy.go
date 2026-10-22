@@ -1,6 +1,6 @@
 package service
 
-import "core/authz"
+import "sdk/authz"
 
 const ResourceMember = "member"
 

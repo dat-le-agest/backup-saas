@@ -53,7 +53,7 @@ type VersionCache interface {
 	SetMembershipVersion(ctx context.Context, tenantID, userID string, version int64) error
 }
 
-// AccessTokenSigner is satisfied by *core/token.Signer.
+// AccessTokenSigner is satisfied by *sdk/token.Signer.
 type AccessTokenSigner interface {
 	Sign(userID, tenantID, role string, membershipVersion int64) (string, time.Time, error)
 }

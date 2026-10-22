@@ -9,9 +9,9 @@ import (
 	"core/apperr"
 	"core/logger"
 	"core/reqctx"
-	"core/token"
 	"core/uow"
 	"iam/internal/model"
+	"sdk/token"
 )
 
 const DefaultRefreshTTL = 14 * 24 * time.Hour

@@ -13,7 +13,7 @@ const (
 )
 
 // Identity is who is calling, resolved once by the gateway's authenticator.
-// Role is the caller's role inside TenantID (see core/authz for the vocabulary).
+// Role is the caller's role inside TenantID (roles are defined by the platform, see platform/sdk/authz).
 type Identity struct {
 	UserID   string
 	TenantID string

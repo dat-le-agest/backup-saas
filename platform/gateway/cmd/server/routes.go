@@ -10,7 +10,7 @@ import (
 	"core/response"
 	"gateway/config"
 	"gateway/internal/handler"
-	"gateway/internal/middleware"
+	"sdk/httpx"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -22,7 +22,7 @@ const (
 )
 
 type routeOptions struct {
-	auth middleware.Authenticator
+	auth httpx.Authenticator
 	// per client IP, on the unauthenticated /v1/auth/* endpoints (login, register...)
 	authRatePerMinute, authRateBurst int
 	// devLogin exposes POST /v1/auth/dev-login. Dev environment only.
@@ -42,8 +42,8 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 		otelgin.Middleware(config.ServiceName, otelgin.WithFilter(func(r *http.Request) bool {
 			return r.URL.Path != "/healthz"
 		})),
-		middleware.RequestID(),
-		middleware.AccessLog(opts.logger),
+		httpx.RequestID(),
+		httpx.AccessLog(opts.logger),
 	)
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -52,12 +52,11 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 
 	iam := di.MustGet[*handler.IamHandler](c)
 
-	public := r.Group("/v1", middleware.RateLimit(opts.authRatePerMinute, opts.authRateBurst))
+	public := r.Group("/v1", httpx.RateLimit(opts.authRatePerMinute, opts.authRateBurst))
 	iam.RegisterPublicRoutes(public, opts.devLogin)
 
-	v1 := r.Group("/v1", middleware.Auth(opts.auth))
+	v1 := r.Group("/v1", httpx.Auth(opts.auth))
 	iam.RegisterRoutes(v1)
-	di.MustGet[*handler.NoteHandler](c).RegisterRoutes(v1)
 
 	r.NoRoute(func(c *gin.Context) {
 		response.Fail(c, fmt.Errorf("%w: route %s %s", apperr.ErrNotFound, c.Request.Method, c.Request.URL.Path))

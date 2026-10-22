@@ -8,13 +8,13 @@ import (
 	"api/gen/go/platform/authz/v1/authzv1connect"
 	"core/outbox"
 
-	"core/authz"
 	"core/di"
 	"core/logger"
 	"core/uow"
 	"iam/internal/repository"
 	"iam/internal/service"
 	grpctransport "iam/internal/transport/rpc"
+	"sdk/authz"
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"

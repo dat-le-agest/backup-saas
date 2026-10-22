@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"core/apperr"
-	"core/authz"
 	"core/logger"
 	"core/reqctx"
 	"core/tenancy"
-	"core/token"
 	"core/uow"
 	"iam/internal/model"
+	"sdk/authz"
+	"sdk/token"
 )
 
 // MemberService manages memberships of the caller's tenant.

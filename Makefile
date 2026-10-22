@@ -17,7 +17,7 @@ COMPOSE := docker compose -f deploy/compose.yaml
 
 up:
 	$(COMPOSE) up -d --build
-	@echo "gateway http://localhost:8080 | grafana http://localhost:3030 | alloy http://localhost:12345"
+	@echo "gateway http://localhost:8080 | notes http://localhost:8081 | grafana http://localhost:3030 | alloy http://localhost:12345"
 
 # only Postgres + Redis, to run services with `go run` against them
 deps:
@@ -30,7 +30,7 @@ down-v:
 	$(COMPOSE) down -v
 
 logs:
-	$(COMPOSE) logs -f --tail=100 iam note gateway
+	$(COMPOSE) logs -f --tail=100 iam authz gateway note notes-gateway
 
 ps:
 	$(COMPOSE) ps

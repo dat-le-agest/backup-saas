@@ -9,7 +9,8 @@ import (
 	"api/gen/go/apps/notes/note/v1/notev1connect"
 	"core/apperr"
 	"core/response"
-	"gateway/internal/dto"
+	"notes-gateway/internal/dto"
+	"sdk/httpx"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,8 +37,7 @@ func (h *NoteHandler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *NoteHandler) create(c *gin.Context) {
 	var body dto.CreateNoteRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.Fail(c, errInvalidBody)
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 
@@ -85,8 +85,7 @@ func (h *NoteHandler) update(c *gin.Context) {
 	}
 
 	var body dto.UpdateNoteRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.Fail(c, errInvalidBody)
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 
@@ -110,8 +109,6 @@ func (h *NoteHandler) delete(c *gin.Context) {
 	}
 	response.NoContent(c)
 }
-
-var errInvalidBody = fmt.Errorf("%w: invalid JSON body", apperr.ErrInvalid)
 
 func parseID(c *gin.Context) (uint64, bool) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)

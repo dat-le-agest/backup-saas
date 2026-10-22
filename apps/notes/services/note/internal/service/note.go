@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"core/apperr"
-	"core/authz"
 	"core/reqctx"
 	"core/tenancy"
 	"core/uow"
 	"note/internal/model"
+	"sdk/authz"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"

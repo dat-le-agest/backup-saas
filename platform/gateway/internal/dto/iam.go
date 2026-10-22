@@ -1,3 +1,6 @@
+// Package dto holds the public JSON shapes of the platform gateway and their
+// mapping to/from iam proto messages. Proto types never reach the client directly,
+// so the public API stays stable when internal contracts evolve.
 package dto
 
 import (

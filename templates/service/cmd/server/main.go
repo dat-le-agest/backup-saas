@@ -7,8 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"core/authz"
-	"core/components/authzc"
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/otelc"
@@ -16,6 +14,8 @@ import (
 	"core/di"
 	"core/outbox"
 	"core/sctx"
+	"sdk/authz"
+	"sdk/components/authzc"
 	"template/config"
 	grpctransport "template/internal/transport/rpc"
 	"template/migrations"

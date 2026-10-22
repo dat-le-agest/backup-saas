@@ -1,4 +1,4 @@
-package middleware
+package httpx
 
 import (
 	"net/http"

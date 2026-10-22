@@ -7,8 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"core/authz"
-	"core/components/authzc"
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/otelc"
@@ -19,6 +17,8 @@ import (
 	"note/config"
 	grpctransport "note/internal/transport/rpc"
 	"note/migrations"
+	"sdk/authz"
+	"sdk/components/authzc"
 
 	"github.com/gin-gonic/gin"
 )

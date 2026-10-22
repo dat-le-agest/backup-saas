@@ -10,7 +10,7 @@ import (
 	"api/gen/go/platform/iam/v1/iamv1connect"
 	"core/apperr"
 	"core/logger"
-	"core/token"
+	"sdk/token"
 
 	"github.com/redis/go-redis/v9"
 )
