@@ -2,10 +2,10 @@ go 1.27.0
 
 use (
 	./api
+	./apps/notes/services/note
 	./core
-	./services/authz
-	./services/gateway
-	./services/iam
-	./services/saas
+	./platform/authz
+	./platform/gateway
+	./platform/iam
 	./templates/service
 )

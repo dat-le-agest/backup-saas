@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	authzv1 "api/gen/go/authz/v1"
-	"api/gen/go/authz/v1/authzv1connect"
+	authzv1 "api/gen/go/platform/authz/v1"
+	"api/gen/go/platform/authz/v1/authzv1connect"
 	"core/apperr"
 	"core/authz"
 	"core/components/authzc"

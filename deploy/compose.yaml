@@ -25,7 +25,7 @@ x-service: &service
 services:
   iam:
     <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: services/iam } }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/iam } }
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: iam
@@ -36,17 +36,17 @@ services:
   # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
   authz:
     <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: services/authz } }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/authz } }
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: authz
       GIN_PORT: "3002"
       DB_DSN: postgres://authz:authz@postgres:5432/authz?sslmode=disable
 
-  # the service template itself, run as the "note" example service
+  # notes app: the note service (scaffolded from templates/service)
   note:
     <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: templates/service } }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: apps/notes/services/note } }
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: note
@@ -57,7 +57,7 @@ services:
 
   gateway:
     <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: services/gateway } }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/gateway } }
     depends_on: [redis, alloy, iam, note]
     container_name: gateway
     # no database

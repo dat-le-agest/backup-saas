@@ -1,0 +1,224 @@
+syntax = "proto3";
+
+package platform.iam.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// IamService owns tenants, memberships and tokens. Internal only: the gateway
+// exposes the public REST API and verifies access tokens with iam's JWKS
+// (GET /.well-known/jwks.json on the iam service).
+//
+// Caller identity (user, tenant, role) comes from the X-User-Id / X-Tenant-Id /
+// X-Tenant-Role metadata set by the gateway from a verified access token.
+service IamService {
+  // Creates a user with email + password and logs them in (tenant-less tokens).
+  // ALREADY_EXISTS if the email is taken.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Email + password login. Every failure returns the same UNAUTHENTICATED error,
+  // whether the email exists or not. After 5 failures for an email, RESOURCE_EXHAUSTED
+  // for 15 minutes (applies to unknown emails too, so it doesn't reveal accounts).
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // Changes the caller's password and revokes all their refresh tokens (every tenant).
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+
+  // The calling user.
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+
+  // Issues tokens for any user id without credentials, creating the user if needed.
+  // Only enabled when iam runs with app-env=dev; PERMISSION_DENIED otherwise.
+  rpc DevLogin(DevLoginRequest) returns (DevLoginResponse);
+
+  // Issues tokens scoped to tenant_id for the calling user (must be an active member).
+  rpc SwitchTenant(SwitchTenantRequest) returns (SwitchTenantResponse);
+
+  // Exchanges a refresh token for a new pair. Refresh tokens are single-use:
+  // presenting an already used one revokes its whole family (theft detection).
+  rpc RefreshTokens(RefreshTokensRequest) returns (RefreshTokensResponse);
+
+  // Revokes the refresh token family (logout).
+  rpc RevokeRefreshToken(RevokeRefreshTokenRequest) returns (RevokeRefreshTokenResponse);
+
+  // Current version of a membership, compared by the gateway with the token's mv.
+  // NOT_FOUND if the user is not an active member of the tenant.
+  rpc GetMembershipVersion(GetMembershipVersionRequest) returns (GetMembershipVersionResponse);
+
+  // Creates a tenant; the calling user becomes its owner.
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+
+  // Tenants the calling user is an active member of.
+  rpc ListMyTenants(ListMyTenantsRequest) returns (ListMyTenantsResponse);
+
+  // Members of the caller's tenant. Any role may list.
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+
+  // owner/admin. Admins cannot grant the owner role. The user must exist
+  // (identified by user_id or email); NOT_FOUND otherwise.
+  rpc AddMember(AddMemberRequest) returns (AddMemberResponse);
+
+  // owner/admin. Admins cannot change owners or grant owner. The last owner cannot be demoted.
+  rpc UpdateMemberRole(UpdateMemberRoleRequest) returns (UpdateMemberRoleResponse);
+
+  // owner/admin, or any member removing themselves (leave).
+  // Admins cannot remove owners. The last owner cannot be removed.
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+}
+
+message TokenPair {
+  string access_token = 1;
+  google.protobuf.Timestamp access_token_expire_time = 2;
+  string refresh_token = 3;
+  google.protobuf.Timestamp refresh_token_expire_time = 4;
+}
+
+message Tenant {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp create_time = 3;
+}
+
+message Member {
+  string tenant_id = 1;
+  string user_id = 2;
+  // owner | admin | member | viewer
+  string role = 3;
+  google.protobuf.Timestamp create_time = 4;
+  google.protobuf.Timestamp update_time = 5;
+  // Empty for users without an email (dev login).
+  string email = 6;
+}
+
+message User {
+  string id = 1;
+  // Empty for users created by dev login.
+  string email = 2;
+  google.protobuf.Timestamp create_time = 3;
+}
+
+message RegisterRequest {
+  string email = 1;
+  // 10-128 characters.
+  string password = 2;
+}
+
+message RegisterResponse {
+  User user = 1;
+  TokenPair tokens = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+  // Optional: issue tokens directly scoped to this tenant.
+  string tenant_id = 3;
+}
+
+message LoginResponse {
+  TokenPair tokens = 1;
+}
+
+message ChangePasswordRequest {
+  string current_password = 1;
+  string new_password = 2;
+}
+
+message ChangePasswordResponse {}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  User user = 1;
+}
+
+message DevLoginRequest {
+  string user_id = 1;
+  // Optional: issue tokens directly scoped to this tenant.
+  string tenant_id = 2;
+}
+
+message DevLoginResponse {
+  TokenPair tokens = 1;
+}
+
+message SwitchTenantRequest {
+  string tenant_id = 1;
+}
+
+message SwitchTenantResponse {
+  TokenPair tokens = 1;
+}
+
+message RefreshTokensRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokensResponse {
+  TokenPair tokens = 1;
+}
+
+message RevokeRefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RevokeRefreshTokenResponse {}
+
+message GetMembershipVersionRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message GetMembershipVersionResponse {
+  int64 version = 1;
+}
+
+message CreateTenantRequest {
+  string name = 1;
+}
+
+message CreateTenantResponse {
+  Tenant tenant = 1;
+}
+
+message ListMyTenantsRequest {}
+
+message ListMyTenantsResponse {
+  repeated MyTenant tenants = 1;
+}
+
+message MyTenant {
+  Tenant tenant = 1;
+  string role = 2;
+}
+
+message ListMembersRequest {}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}
+
+message AddMemberRequest {
+  // Either user_id or email.
+  string user_id = 1;
+  string role = 2;
+  string email = 3;
+}
+
+message AddMemberResponse {
+  Member member = 1;
+}
+
+message UpdateMemberRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
+message UpdateMemberRoleResponse {
+  Member member = 1;
+}
+
+message RemoveMemberRequest {
+  string user_id = 1;
+}
+
+message RemoveMemberResponse {}

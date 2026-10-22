@@ -7,8 +7,8 @@ import (
 	"context"
 	"math"
 
-	notev1 "api/gen/go/note/v1"
-	"api/gen/go/note/v1/notev1connect"
+	notev1 "api/gen/go/apps/notes/note/v1"
+	"api/gen/go/apps/notes/note/v1/notev1connect"
 	"core/apperr"
 	"core/components/ginc"
 	"core/logger"
@@ -31,7 +31,7 @@ func NewNoteHandler(svc *service.NoteService, l logger.Logger) *NoteHandler {
 	return &NoteHandler{svc: svc, logger: l.With("handler", "note")}
 }
 
-// Mount registers the handler on the router under /note.v1.NoteService/.
+// Mount registers the handler on the router under /apps.notes.note.v1.NoteService/.
 func (h *NoteHandler) Mount(r gin.IRouter) {
 	path, handler := notev1connect.NewNoteServiceHandler(h, rpc.HandlerOptions(h.logger))
 	ginc.Mount(r, path, handler)

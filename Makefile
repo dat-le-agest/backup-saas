@@ -7,10 +7,10 @@ BUF_VERSION          := v1.73.0
 PROTOC_GEN_GO_VERSION := v1.36.12
 CONNECT_GO_VERSION   := v1.21.0
 
-# make service name=billing
+# make service app=notes name=billing  → apps/notes/services/billing
 service:
-	@test -n "$(name)" || (echo "usage: make service name=<name>" && exit 1)
-	@./scripts/new-service.sh $(name)
+	@test -n "$(app)" -a -n "$(name)" || (echo "usage: make service app=<app> name=<name>" && exit 1)
+	@./scripts/new-service.sh $(app) $(name)
 
 # ---- local stack (deploy/compose.yaml) ----
 COMPOSE := docker compose -f deploy/compose.yaml
@@ -38,7 +38,9 @@ ps:
 # new goose migration: make migration svc=iam name=add_avatar   (svc=template for the template)
 migration:
 	@test -n "$(svc)" -a -n "$(name)" || (echo "usage: make migration svc=<service> name=<snake_case>" && exit 1)
-	@dir=$$( [ "$(svc)" = template ] && echo templates/service || echo services/$(svc) ); \
+	@dir=$$( case "$(svc)" in template) echo templates/service;; \
+		*) ls -d platform/$(svc) apps/*/services/$(svc) 2>/dev/null | head -1;; esac ); \
+	test -n "$$dir" || (echo "no service named $(svc) in platform/ or apps/*/services/" && exit 1); \
 	test -d "$$dir/migrations" || (echo "$$dir/migrations not found" && exit 1); \
 	f="$$dir/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$f" && echo "created $$f"
@@ -47,14 +49,14 @@ migration:
 AUTHZ_URL ?= http://localhost:3002
 authz-model: $(BIN)/buf
 	@python3 -c 'import json; print(json.dumps({"dsl": open("deploy/authz/model.fga").read(), "activate": True}))' \
-	| $(BIN)/buf curl --schema api/proto --data @- $(AUTHZ_URL)/authz.v1.AuthzService/WriteAuthorizationModel
+	| $(BIN)/buf curl --schema api/proto --data @- $(AUTHZ_URL)/platform.authz.v1.AuthzService/WriteAuthorizationModel
 
 # copy relationships of existing memberships and notes into the authz service
 authz-backfill:
 	./scripts/authz-backfill.sh
 
-# Ed25519 signing key for iam access tokens: make jwt-key out=services/iam/jwt.pem
-out ?= services/iam/jwt.pem
+# Ed25519 signing key for iam access tokens: make jwt-key out=platform/iam/jwt.pem
+out ?= platform/iam/jwt.pem
 jwt-key:
 	@test ! -e "$(out)" || (echo "$(out) already exists, refusing to overwrite" && exit 1)
 	openssl genpkey -algorithm ed25519 -out "$(out)"

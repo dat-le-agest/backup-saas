@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Create a new service in services/ from templates/service.
+# Create a new service of an app in apps/<app>/services/ from templates/service.
 #
-# Usage: scripts/new-service.sh <name>
-#   name: lowercase letters, digits and hyphens, starting with a letter (e.g. billing, user-profile)
+# Usage: scripts/new-service.sh <app> <name>
+#   app, name: lowercase letters, digits and hyphens, starting with a letter (e.g. notes, billing)
+#   The Go module is named <name>: it must be unique in the workspace (go.work).
 #
 # What it does:
-#   1. copies templates/service/ to services/<name>/ (skipping .env, *.db and build artifacts)
+#   1. copies templates/service/ to apps/<app>/services/<name>/ (skipping .env, *.db and build artifacts)
 #   2. renames the Go module and every "template/..." import to "<name>/..."
 #   3. sets config.ServiceName and the default database names
 #   4. registers the module in go.work
@@ -25,12 +26,15 @@ die() {
 }
 
 usage() {
-	echo "Usage: $(basename "$0") <name>" >&2
+	echo "Usage: $(basename "$0") <app> <name>" >&2
 	exit 1
 }
 
-[[ $# -eq 1 ]] || usage
-NAME="$1"
+[[ $# -eq 2 ]] || usage
+APP="$1"
+NAME="$2"
+
+[[ "$APP" =~ ^[a-z][a-z0-9-]*$ && "$APP" != *- ]] || die "invalid app '$APP' (allowed: lowercase letters, digits, hyphens; must start with a letter)"
 
 [[ "$NAME" =~ ^[a-z][a-z0-9-]*$ ]] || die "invalid name '$NAME' (allowed: lowercase letters, digits, hyphens; must start with a letter)"
 [[ "$NAME" != *- ]] || die "name must not end with a hyphen"
@@ -38,8 +42,13 @@ NAME="$1"
 for r in "${RESERVED[@]}"; do
 	[[ "$NAME" != "$r" ]] || die "'$NAME' is reserved"
 done
+# module names share one namespace across platform/ and apps/
+if (cd "$ROOT" && go list -m 2>/dev/null) | grep -qx "$NAME"; then
+	die "a module named '$NAME' already exists in go.work"
+fi
 
-TARGET_DIR="$ROOT/services/$NAME"
+REL="apps/$APP/services/$NAME"
+TARGET_DIR="$ROOT/$REL"
 [[ -d "$TEMPLATE_DIR" ]] || die "template not found: $TEMPLATE_DIR"
 [[ ! -e "$TARGET_DIR" ]] || die "'$NAME' already exists: $TARGET_DIR"
 command -v go >/dev/null || die "go is not installed"
@@ -51,11 +60,11 @@ cleanup_on_error() {
 	echo "failed, removing $TARGET_DIR" >&2
 	rm -rf "$TARGET_DIR"
 	# undo go.work registration if it already happened
-	(cd "$ROOT" && go work edit -dropuse="./services/$NAME" 2>/dev/null) || true
+	(cd "$ROOT" && go work edit -dropuse="./$REL" 2>/dev/null) || true
 }
 trap cleanup_on_error ERR
 
-echo "→ copying templates/service to services/$NAME/"
+echo "→ copying templates/service to $REL/"
 mkdir -p "$TARGET_DIR"
 tar -C "$TEMPLATE_DIR" \
 	--exclude='.env' \
@@ -95,8 +104,8 @@ fi
 # renamed imports may no longer be sorted within their group
 gofmt -w "$TARGET_DIR"
 
-echo "→ registering ./services/$NAME in go.work"
-(cd "$ROOT" && go work use "./services/$NAME")
+echo "→ registering ./$REL in go.work"
+(cd "$ROOT" && go work use "./$REL")
 
 echo "→ building and testing"
 (cd "$TARGET_DIR" && go vet ./... && go test ./...)
@@ -105,13 +114,13 @@ trap - ERR
 
 cat <<EOF
 
-✓ service '$NAME' created at services/$NAME/
+✓ service '$NAME' created at $REL/
 
 Next steps:
   1. give it a database: add a role + database to deploy/postgres/init.sql
-     (or create them by hand) and set DB_DSN in services/$NAME/.env.example
-  2. cd services/$NAME && cp .env.example .env && go run ./cmd/server
-  3. to run it in the stack: add it to deploy/compose.yaml (SERVICE: services/$NAME)
+     (or create them by hand) and set DB_DSN in $REL/.env.example
+  2. cd $REL && cp .env.example .env && go run ./cmd/server
+  3. to run it in the stack: add it to deploy/compose.yaml (SERVICE: $REL)
 
 The 'note' module is an example: rename or remove it in
   internal/{model,service,repository,transport} and cmd/server/{container.go,main.go}
