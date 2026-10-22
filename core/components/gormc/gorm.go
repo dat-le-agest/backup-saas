@@ -14,6 +14,7 @@ package gormc
 
 import (
 	"context"
+	"core/components/gormc/plugins/exclause"
 	"core/logger"
 	"core/migrate"
 	"core/sctx"
@@ -155,6 +156,10 @@ func Open(dsn string) (*gorm.DB, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	// WITH / UNION / INTERSECT / EXCEPT clauses
+	if err := conn.Use(exclause.New()); err != nil {
+		return nil, fmt.Errorf("gorm exclause plugin: %w", err)
 	}
 	return conn, nil
 }

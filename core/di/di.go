@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"core/graph"
 )
 
 type Scope int
@@ -24,6 +26,7 @@ type providerNode struct {
 type Container struct {
 	mu        sync.Mutex
 	providers map[reflect.Type]*providerNode
+	order     []reflect.Type // providers in registration order: Build is deterministic
 	instances map[reflect.Type]interface{}
 	resolving map[reflect.Type]bool
 }
@@ -73,6 +76,7 @@ func Provide[T any](c *Container, provider interface{}, scope Scope) error {
 		scope:    scope,
 		hasError: hasError,
 	}
+	c.order = append(c.order, targetType)
 	return nil
 }
 
@@ -98,20 +102,18 @@ func (c *Container) isRegistered(t reflect.Type) bool {
 	return hasProvider || hasInstance
 }
 
-// Build validates the graph: every dependency is registered and there is no cycle.
+// Build validates the graph (every dependency is registered, no cycle) and
+// creates every Singleton in dependency order, so a failing constructor stops
+// the service at startup instead of on first use. Transient providers stay lazy.
 func (c *Container) Build() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	inDegree := make(map[reflect.Type]int)
-	graph := make(map[reflect.Type][]reflect.Type)
-
-	for targetType, node := range c.providers {
-		if _, exists := inDegree[targetType]; !exists {
-			inDegree[targetType] = 0
-		}
-
-		providerType := node.fn.Type()
+	// edge dependency → dependent: dependencies come first
+	g := graph.New[reflect.Type]()
+	for _, targetType := range c.order {
+		g.AddNode(targetType)
+		providerType := c.providers[targetType].fn.Type()
 		for i := 0; i < providerType.NumIn(); i++ {
 			paramType := providerType.In(i)
 			if _, isInstance := c.instances[paramType]; isInstance {
@@ -120,36 +122,23 @@ func (c *Container) Build() error {
 			if _, exists := c.providers[paramType]; !exists {
 				return fmt.Errorf("missing provider for type %v (required by %v)", paramType, targetType)
 			}
-			graph[paramType] = append(graph[paramType], targetType)
-			inDegree[targetType]++
+			g.AddEdge(paramType, targetType)
 		}
 	}
 
-	queue := []reflect.Type{}
-	for node, degree := range inDegree {
-		if degree == 0 {
-			queue = append(queue, node)
+	order, err := g.TopoSort()
+	if err != nil {
+		return fmt.Errorf("circular dependency among providers: %w", err)
+	}
+
+	for _, targetType := range order {
+		if _, built := c.instances[targetType]; built || c.providers[targetType].scope != Singleton {
+			continue
+		}
+		if _, err := c.resolveType(targetType); err != nil {
+			return err
 		}
 	}
-
-	visitedCount := 0
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		visitedCount++
-
-		for _, neighbor := range graph[curr] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	if visitedCount != len(c.providers) {
-		return fmt.Errorf("circular dependency detected among providers")
-	}
-
 	return nil
 }
 

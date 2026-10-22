@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"core/components/gormc/plugins/exclause"
 	"core/logger"
 	"core/migrate"
 
@@ -73,6 +74,9 @@ func New(t testing.TB, migrations ...fs.FS) *gorm.DB {
 	// same settings as gormc.Open (not imported: gormc's own tests use testdb)
 	db, err := gorm.Open(postgres.Open(dbDSN), &gorm.Config{TranslateError: true})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Use(exclause.New()); err != nil {
 		t.Fatal(err)
 	}
 	db.Logger = gormlogger.Discard

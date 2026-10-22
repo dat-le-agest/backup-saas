@@ -2,9 +2,13 @@ package di
 
 import (
 	"errors"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"core/graph"
 )
 
 type DB struct{ name string }
@@ -83,5 +87,80 @@ func TestConcurrentSingleton(t *testing.T) {
 	wg.Wait()
 	if calls != 1 {
 		t.Fatalf("provider called %d times", calls)
+	}
+}
+
+func TestBuildNamesTheCycle(t *testing.T) {
+	type A struct{}
+	type B struct{}
+	type C struct{}
+	c := New()
+	_ = Provide[*A](c, func(*C) *A { return nil }, Singleton)
+	_ = Provide[*B](c, func(*A) *B { return nil }, Singleton)
+	_ = Provide[*C](c, func(*B) *C { return nil }, Singleton)
+
+	err := c.Build()
+	var cerr *graph.CycleError[reflect.Type]
+	if !errors.As(err, &cerr) {
+		t.Fatalf("want a graph.CycleError, got %v", err)
+	}
+	for _, name := range []string{"di.A", "di.B", "di.C", "→"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("%q does not mention %s", err, name)
+		}
+	}
+}
+
+func TestBuildMissingProvider(t *testing.T) {
+	c := New()
+	_ = Provide[*UserService](c, func(r UserRepo) *UserService { return &UserService{repo: r} }, Singleton)
+	err := c.Build()
+	if err == nil || !strings.Contains(err.Error(), "missing provider for type di.UserRepo") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBuildCreatesSingletonsInDependencyOrder(t *testing.T) {
+	var built []string
+	c := New()
+	// registered dependents first: Build still constructs dependencies first
+	_ = Provide[*UserService](c, func(r UserRepo) *UserService {
+		built = append(built, "service")
+		return &UserService{repo: r}
+	}, Singleton)
+	_ = Provide[UserRepo](c, func(db *DB) *userRepo {
+		built = append(built, "repo")
+		return &userRepo{db: db}
+	}, Singleton)
+	_ = Provide[*DB](c, func() *DB {
+		built = append(built, "db")
+		return &DB{name: "main"}
+	}, Singleton)
+	_ = Provide[string](c, func() string {
+		built = append(built, "transient")
+		return "x"
+	}, Transient)
+
+	if err := c.Build(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"db", "repo", "service"}; !slices.Equal(built, want) {
+		t.Fatalf("built %v, want %v (transient stays lazy)", built, want)
+	}
+
+	MustGet[*UserService](c)
+	if len(built) != 3 {
+		t.Fatalf("Get rebuilt a singleton: %v", built)
+	}
+	if err := c.Build(); err != nil || len(built) != 3 {
+		t.Fatalf("second Build: %v, built %v", err, built)
+	}
+}
+
+func TestBuildSurfacesProviderError(t *testing.T) {
+	c := New()
+	_ = Provide[*DB](c, func() (*DB, error) { return nil, errors.New("boom") }, Singleton)
+	if err := c.Build(); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected boom from Build, got %v", err)
 	}
 }

@@ -28,11 +28,16 @@ metrics_generator:
         send_exemplars: true
   traces_storage:
     path: /var/tempo/generator/traces
+  processor:
+    # recent spans kept by the generator for TraceQL metrics (Grafana Traces Drilldown)
+    local_blocks:
+      filter_server_spans: false # all spans, not only server/root ones
+      flush_to_storage: true     # metrics queries beyond the recent window
 
 overrides:
   defaults:
     metrics_generator:
-      processors: [service-graphs, span-metrics]
+      processors: [service-graphs, span-metrics, local-blocks]
 
 storage:
   trace:
