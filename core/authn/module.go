@@ -8,7 +8,7 @@ import (
 	"core/authn/password"
 	"core/authn/repository"
 	"core/authn/service"
-	"core/authz"
+	"core/authz/rebac"
 	"core/logger"
 	"core/token"
 	"core/uow"
@@ -82,7 +82,12 @@ func New(cfg Config) (*Module, error) {
 	}, cfg.Logger)
 	auth := service.NewAuthService(store, u, cfg.Hasher, tokens, cfg.Logger)
 	tenants := service.NewTenantService(store, u, cache)
-	members := service.NewMemberService(store, u, authz.NewRBAC(service.MemberPolicy), cache, cfg.Logger)
+	// who manages members: the base model's tenant relations (can_*_member)
+	base, err := rebac.BaseModel()
+	if err != nil {
+		return nil, err
+	}
+	members := service.NewMemberService(store, u, rebac.NewRBAC(base), cache, cfg.Logger)
 	admin := service.NewAdminService(store, u, members, cfg.Hasher, cache, cfg.Logger)
 
 	return &Module{

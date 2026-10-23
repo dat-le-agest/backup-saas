@@ -45,13 +45,13 @@ migration:
 	f="$$dir/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$f" && echo "created $$f"
 
-# admin dashboard (platform/admin/web): build into dist/ (embedded by the admin
-# service), or run the dev server on :5173 against the admin API on :8090
+# admin dashboard (admin-dashboard/): build into platform/admin/web/dist (embedded
+# by the admin service), or run the dev server on :5173 against the admin API on :8090
 admin-web:
-	cd platform/admin/web && npm ci --no-audit --no-fund && npm run build
+	cd admin-dashboard && npm ci --no-audit --no-fund && npm run build
 
 admin-web-dev:
-	cd platform/admin/web && npm install --no-audit --no-fund && npm run dev
+	cd admin-dashboard && npm install --no-audit --no-fund && npm run dev
 
 # Ed25519 signing key for an app's access tokens: make jwt-key out=apps/notes/gateway/jwt.pem
 out ?= apps/notes/gateway/jwt.pem

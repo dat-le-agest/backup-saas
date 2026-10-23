@@ -1,13 +1,9 @@
 package httpapi
 
 import (
-	"crypto/subtle"
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
-	"core/apperr"
 	"core/authn/model"
 	"core/authn/service"
 	"core/httpx"
@@ -22,20 +18,18 @@ import (
 type AdminHandler struct {
 	svc *service.AdminService
 	app string
-	key []byte
+	key string
 }
 
 // NewAdminHandler: key is the app's admin key (ADMIN_API_KEY), shared with the
 // admin service; empty disables the admin API (every request is refused).
 func NewAdminHandler(svc *service.AdminService, app, key string) *AdminHandler {
-	return &AdminHandler{svc: svc, app: app, key: []byte(key)}
+	return &AdminHandler{svc: svc, app: app, key: key}
 }
-
-var errAdminKey = fmt.Errorf(`%w: expected "Authorization: Bearer <admin key>"`, apperr.ErrUnauthenticated)
 
 // RegisterRoutes mounts /admin/v1/* on r.
 func (h *AdminHandler) RegisterRoutes(r gin.IRouter) {
-	g := r.Group("/admin/v1", h.requireKey)
+	g := r.Group("/admin/v1", httpx.AdminKey(h.key))
 	g.GET("/stats", h.stats)
 
 	g.GET("/users", h.listUsers)
@@ -48,16 +42,6 @@ func (h *AdminHandler) RegisterRoutes(r gin.IRouter) {
 	g.DELETE("/tenants/:id", h.deleteTenant)
 	g.PATCH("/tenants/:id/members/:user_id", h.updateMember)
 	g.DELETE("/tenants/:id/members/:user_id", h.removeMember)
-}
-
-func (h *AdminHandler) requireKey(c *gin.Context) {
-	scheme, raw, ok := strings.Cut(c.GetHeader("Authorization"), " ")
-	if len(h.key) == 0 || !ok || !strings.EqualFold(scheme, "Bearer") ||
-		subtle.ConstantTimeCompare([]byte(strings.TrimSpace(raw)), h.key) != 1 {
-		response.Fail(c, errAdminKey)
-		return
-	}
-	c.Next()
 }
 
 func pageOf(c *gin.Context) model.Page {

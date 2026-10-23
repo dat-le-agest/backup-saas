@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os/signal"
@@ -30,6 +31,10 @@ func main() {
 
 // run returns errors instead of exiting so deferred sc.Stop() always executes.
 func run() error {
+	// defined before the service context parses flags (and their env, ADMIN_API_KEY)
+	adminKey := flag.String("admin-api-key", "",
+		"key of the engine's admin API (/admin/v1/authz, reached through the gateway's admin API); empty disables it")
+
 	sc := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
@@ -60,7 +65,7 @@ func run() error {
 	db := dbc.GetDB()
 
 	// embedded ReBAC engine: its tables in schema authz of this service's
-	// database (migrated with the service's migrations), model from authz/*.fga
+	// database (migrated with the service's migrations), model from authz/*.yml
 	engineDSN := ""
 	if dbc.MigrateMode() != gormc.MigrateOff {
 		engineDSN = dbc.DSN()
@@ -69,8 +74,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	model, err := rebac.LoadModel(modelauthz.FS)
+	if err != nil {
+		return err
+	}
 	authzSettings := authzSetup{
 		enforce: sctx.MustGetAs[authzc.SettingsComponent](sc, config.ComponentAuthz).Enforce(),
+		model:   model,
 		engine:  engine,
 	}
 	logger.Infof("authorization: enforce=%s (relationships recorded by the embedded engine)", authzSettings.enforce)
@@ -90,6 +100,8 @@ func run() error {
 	// gRPC (+ gRPC-Web, Connect/JSON) on the same port, HTTP/2 via h2c.
 	// Public REST lives in the gateway; this service is internal only.
 	di.MustGet[*grpctransport.NoteHandler](c).Mount(router)
+	// the engine's admin API (model, tuples, checks), for the admin dashboard
+	rebac.NewAdminHandler(engine, *adminKey).RegisterRoutes(router)
 
 	if err := server.Run(); err != nil {
 		return err

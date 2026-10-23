@@ -45,10 +45,12 @@ services:
       <<: *service-env
       OTEL_SERVICE_NAME: note
       GIN_PORT: "3000"
-      # who decides: rbac (NotePolicy) or rebac (embedded engine, model authz/notes.fga);
+      # who decides: rbac (roles only) or rebac (embedded engine); both use authz/authz.yml;
       # the engine records relationships either way, so switching needs no backfill
       AUTHZ_ENFORCE: rbac
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
+      # admin API of its ReBAC engine, reached only through the gateway's admin API
+      ADMIN_API_KEY: dev-notes-admin-key
 
   # public API of the notes app, with its own authentication (core/authn):
   # users, tenants, members and tokens in the notes_auth database

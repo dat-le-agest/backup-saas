@@ -60,7 +60,11 @@ func newTestServerWith(t *testing.T, enforce string) (string, *gorm.DB, *rebac.E
 		t.Fatal(err)
 	}
 
-	c, err := buildContainer(db, log, authzSetup{enforce: enforce, engine: engine})
+	model, err := rebac.LoadModel(modelauthz.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := buildContainer(db, log, authzSetup{enforce: enforce, model: model, engine: engine})
 	if err != nil {
 		t.Fatal(err)
 	}

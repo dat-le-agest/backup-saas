@@ -31,6 +31,7 @@ type fakeApp struct {
 	requests []string
 	auth     []string
 	cookies  []string
+	actors   []string
 }
 
 func (f *fakeApp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +39,7 @@ func (f *fakeApp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
 	f.cookies = append(f.cookies, r.Header.Get("Cookie"))
+	f.actors = append(f.actors, r.Header.Get("X-Admin-Actor"))
 	f.mu.Unlock()
 	if r.Header.Get("Authorization") != "Bearer "+f.key {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -210,10 +212,22 @@ func TestAppsAndProxy(t *testing.T) {
 		t.Fatalf("forwarded credentials: auth=%q cookie=%q", auth[last], cookies[last])
 	}
 
+	// the app's authorization engines: tuple changes are recorded as the admin's
+	if res := e.do("POST", "/api/apps/notes/admin/authz/note/tuples", `{"writes":[]}`, session); res.status != 204 {
+		t.Fatalf("proxied authz change: %d %v", res.status, res.body)
+	}
+	e.app.mu.Lock()
+	reqs, actors := e.app.requests, e.app.actors
+	e.app.mu.Unlock()
+	if reqs[len(reqs)-1] != "POST /admin/v1/authz/note/tuples" || actors[len(actors)-1] != "root@example.com" {
+		t.Fatalf("forwarded authz: %v actor=%q", reqs[len(reqs)-1], actors[len(actors)-1])
+	}
+
 	for name, path := range map[string]string{
-		"not an admin path": "/api/apps/notes/admin/v1/../../secret",
-		"unknown app":       "/api/apps/nope/admin/users",
-		"other resource":    "/api/apps/notes/admin/config",
+		"not an admin path":  "/api/apps/notes/admin/v1/../../secret",
+		"unknown authz path": "/api/apps/notes/admin/authz/note/secret",
+		"unknown app":        "/api/apps/nope/admin/users",
+		"other resource":     "/api/apps/notes/admin/config",
 	} {
 		if res := e.do("GET", path, "", session); res.status != 404 {
 			t.Errorf("%s: %d", name, res.status)

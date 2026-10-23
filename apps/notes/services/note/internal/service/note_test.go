@@ -10,8 +10,10 @@ import (
 
 	"core/apperr"
 	"core/authz"
+	"core/authz/rebac"
 	"core/reqctx"
 	"core/uow"
+	modelauthz "note/authz"
 	"note/internal/model"
 )
 
@@ -63,7 +65,7 @@ func as(userID, role string) context.Context {
 }
 
 func newSvc(repo *fakeRepo) *NoteService {
-	return NewNoteService(repo, authz.NewRBAC(NotePolicy), &fakeRel{}, uow.Nop{})
+	return NewNoteService(repo, modelRBAC, &fakeRel{}, uow.Nop{})
 }
 
 func TestCreateStampsTenantAndOwner(t *testing.T) {
@@ -278,7 +280,7 @@ func (f *fakeRel) Change(_ context.Context, w, d []authz.Tuple) error {
 func TestNoteRelationshipsAreRecorded(t *testing.T) {
 	repo := newRepo()
 	rel := &fakeRel{}
-	svc := NewNoteService(repo, authz.NewRBAC(NotePolicy), rel, uow.Nop{})
+	svc := NewNoteService(repo, modelRBAC, rel, uow.Nop{})
 
 	created, err := svc.Create(as("u1", authz.RoleMember), &model.NoteCreate{Title: "x"})
 	if err != nil {
@@ -307,3 +309,13 @@ func TestNoteRelationshipsAreRecorded(t *testing.T) {
 		t.Fatalf("deleted objects %+v", rel.deletedObjects)
 	}
 }
+
+// modelRBAC decides from the service's model (authz/authz.yml), as main does
+// in rbac mode.
+var modelRBAC = func() authz.Authorizer {
+	m, err := rebac.LoadModel(modelauthz.FS)
+	if err != nil {
+		panic(err)
+	}
+	return rebac.NewRBAC(m)
+}()

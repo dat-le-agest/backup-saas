@@ -20,8 +20,8 @@ const Schema = "authz"
 
 // Config of an embedded engine.
 type Config struct {
-	// Modules: the app's OpenFGA module files (*.fga at the root, usually an
-	// embed.FS), composed with the base module.
+	// Modules: the service's model files (*.yml at the root, usually an
+	// embed.FS), composed with the base model.
 	Modules fs.FS
 	// DSN of the service's database, to migrate the authz schema; "" skips the
 	// migrations (already applied).

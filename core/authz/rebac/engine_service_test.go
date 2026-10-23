@@ -20,23 +20,31 @@ import (
 )
 
 const model = `
-model
-  schema 1.1
-type user
-type tenant
-  relations
-    define owner: [user]
-    define admin: [user] or owner
-    define member: [user] or admin
-type team
-  relations
-    define member: [user, team#member]
-type note
-  relations
-    define tenant: [tenant]
-    define owner: [user]
-    define editor: [user, team#member] or owner or admin from tenant
-    define viewer: [user, user:*, team#member] or editor or member from tenant
+name: test
+types:
+  user: {}
+  tenant:
+    relations:
+      owner: {assignable: [user]}
+      admin: {union: [{assignable: [user]}, owner]}
+      member: {union: [{assignable: [user]}, admin]}
+  team:
+    relations:
+      member: {assignable: [user, "team#member"]}
+  note:
+    relations:
+      tenant: {assignable: [tenant]}
+      owner: {assignable: [user]}
+      editor:
+        union:
+          - assignable: [user, "team#member"]
+          - owner
+          - from: {relation: admin, via: tenant}
+      viewer:
+        union:
+          - assignable: [user, "user:*", "team#member"]
+          - editor
+          - from: {relation: member, via: tenant}
 `
 
 // newDB is a real Postgres with the engine's tables migrated into the authz
@@ -150,24 +158,30 @@ func TestEndToEndOnPostgres(t *testing.T) {
 	}
 
 	// model versions: a new active model drops "member from tenant" from viewer
-	v2, err := s.WriteModel(ctx, `
-model
-  schema 1.1
-type user
-type tenant
-  relations
-    define owner: [user]
-    define admin: [user] or owner
-    define member: [user] or admin
-type team
-  relations
-    define member: [user, team#member]
-type note
-  relations
-    define tenant: [tenant]
-    define owner: [user]
-    define editor: [user, team#member] or owner or admin from tenant
-    define viewer: [user, user:*, team#member] or editor
+	v2, err := s.WriteModel(ctx, `name: test
+types:
+  user: {}
+  tenant:
+    relations:
+      owner: {assignable: [user]}
+      admin: {union: [{assignable: [user]}, owner]}
+      member: {union: [{assignable: [user]}, admin]}
+  team:
+    relations:
+      member: {assignable: [user, "team#member"]}
+  note:
+    relations:
+      tenant: {assignable: [tenant]}
+      owner: {assignable: [user]}
+      editor:
+        union:
+          - assignable: [user, "team#member"]
+          - owner
+          - from: {relation: admin, via: tenant}
+      viewer:
+        union:
+          - assignable: [user, "user:*", "team#member"]
+          - editor
 `, true)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +196,7 @@ type note
 		t.Fatalf("activate unknown: %v", err)
 	}
 	if _, err := s.WriteModel(ctx, "not a model", false); !errors.Is(err, apperr.ErrInvalid) {
-		t.Fatalf("bad dsl: %v", err)
+		t.Fatalf("bad model: %v", err)
 	}
 }
 
@@ -469,7 +483,7 @@ func TestLoadModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files[0].Name != "base.fga" || files[1].Name != "app/notes.fga" {
+	if files[0].Name != "base.yml" || files[1].Name != "app/authz.yml" {
 		t.Fatalf("names: %s, %s", files[0].Name, files[1].Name)
 	}
 	if _, err := Modules(os.DirFS(t.TempDir())); err == nil {
@@ -484,7 +498,7 @@ func TestLoadModules(t *testing.T) {
 	if err != nil || changed || again != id {
 		t.Fatalf("unchanged files made a new version: %v %v %v", again, changed, err)
 	}
-	files[1].Contents += "\ntype folder\n  relations\n    define owner: [user]\n"
+	files[1].Contents += "  folder:\n    relations:\n      owner: {assignable: [user]}\n"
 	newID, changed, err := s.LoadModules(ctx, files)
 	if err != nil || !changed || newID == id {
 		t.Fatalf("changed files: %v %v %v", newID, changed, err)

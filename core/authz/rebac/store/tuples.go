@@ -225,3 +225,73 @@ func (s *Store) ReadChanges(ctx context.Context, objectType string, afterSeq int
 	}
 	return out, err
 }
+
+// TupleFilter selects tuples; empty fields match everything.
+type TupleFilter struct {
+	TenantID               string
+	ObjectType, ObjectID   string
+	Relation               string
+	SubjectType, SubjectID string
+	SubjectRelation        string
+	HasSubjectRelation     bool // SubjectRelation is set ("" = direct subjects only)
+}
+
+// ListTuples returns a page of the tuples matching f, in primary key order,
+// and how many match.
+func (s *Store) ListTuples(ctx context.Context, f TupleFilter, offset, limit int) ([]engine.Tuple, int64, error) {
+	q := s.db(ctx).Table(s.table("relation_tuples"))
+	for col, v := range map[string]string{
+		"tenant_id": f.TenantID, "object_type": f.ObjectType, "object_id": f.ObjectID,
+		"relation": f.Relation, "subject_type": f.SubjectType, "subject_id": f.SubjectID,
+	} {
+		if v != "" {
+			q = q.Where(col+" = ?", v)
+		}
+	}
+	if f.HasSubjectRelation {
+		q = q.Where("subject_relation = ?", f.SubjectRelation)
+	}
+	var total int64
+	if err := q.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []tupleRow
+	err := q.Select("object_type, object_id, relation, subject_type, subject_id, subject_relation, tenant_id").
+		Order("object_type, object_id, relation, subject_type, subject_id, subject_relation").
+		Offset(offset).Limit(limit).Scan(&rows).Error
+	out := make([]engine.Tuple, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.tuple())
+	}
+	return out, total, err
+}
+
+// RecentChanges returns changes before beforeSeq (0 = from the latest), newest
+// first. objectType and tenantID "" = all.
+func (s *Store) RecentChanges(ctx context.Context, objectType, tenantID string, beforeSeq int64, limit int) ([]Change, error) {
+	var rows []struct {
+		Seq                                                                               int64
+		Operation                                                                         string
+		ObjectType, ObjectID, Relation, SubjectType, SubjectID, SubjectRelation, TenantID string
+		Actor                                                                             string
+		ChangedAt                                                                         time.Time
+	}
+	q := s.db(ctx).Table(s.table("tuple_changes")).
+		Select("seq, operation, object_type, object_id, relation, subject_type, subject_id, subject_relation, tenant_id, actor, changed_at")
+	if beforeSeq > 0 {
+		q = q.Where("seq < ?", beforeSeq)
+	}
+	if objectType != "" {
+		q = q.Where("object_type = ?", objectType)
+	}
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	err := q.Order("seq DESC").Limit(limit).Scan(&rows).Error
+	out := make([]Change, 0, len(rows))
+	for _, r := range rows {
+		tuple := tupleRow{r.ObjectType, r.ObjectID, r.Relation, r.SubjectType, r.SubjectID, r.SubjectRelation, r.TenantID}.tuple()
+		out = append(out, Change{Seq: r.Seq, Operation: r.Operation, Tuple: tuple, Actor: r.Actor, ChangedAt: r.ChangedAt})
+	}
+	return out, err
+}

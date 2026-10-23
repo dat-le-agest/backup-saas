@@ -17,6 +17,7 @@ import (
 	"core/authn"
 	authnmigrations "core/authn/migrations"
 	"core/authn/password"
+	"core/authz/rebac"
 	"core/httpx/httpxtest"
 	zaplogger "core/logger/zap"
 	"core/reqctx"
@@ -175,7 +176,12 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		auth: auth, devLogin: o.devLogin, logger: log,
 		authRatePerMinute: o.ratePerMinute, authRateBurst: o.rateBurst,
 	})
-	registerAdminRoutes(s.admin, auth, log)
+	// the note service isn't running here: forwarding fails (503)
+	authzAdmin, err := rebac.NewAdminProxy(adminKey, map[string]string{"note": "http://127.0.0.1:1"}, http.DefaultTransport, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerAdminRoutes(s.admin, auth, authzAdmin, log)
 	return s
 }
 
@@ -526,5 +532,19 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if res := httpxtest.Do(s.admin, "GET", "/healthz", "", ""); res.Status != 200 {
 		t.Fatalf("admin healthz: %d", res.Status)
+	}
+
+	// the services' authorization engines, behind the same key
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/authz", "", ""); res.Status != 401 {
+		t.Fatalf("authz without key: %d", res.Status)
+	}
+	if res := s.adminDo("GET", "/admin/v1/authz", ""); res.Status != 200 || fmt.Sprint(res.Body["data"]) != "[note]" {
+		t.Fatalf("authz services: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("GET", "/admin/v1/authz/note/models", ""); res.Status != 503 {
+		t.Fatalf("authz of an unreachable service: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("GET", "/admin/v1/authz/nope/models", ""); res.Status != 404 {
+		t.Fatalf("authz of an unknown service: %d", res.Status)
 	}
 }

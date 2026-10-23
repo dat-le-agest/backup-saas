@@ -6,23 +6,22 @@ import (
 	"testing"
 )
 
-// The note service's model (base module + its notes.fga) must grant exactly
-// what the RBAC policy of the note service
-// (apps/notes/services/note/internal/service/policy.go) does:
+// The note service's model (base.yml + its authz/authz.yml) must grant what
+// the note service promises:
 //
 //	owner, admin  everything
 //	member        create, read all, update/delete own
 //	viewer        read all
-func TestKitModelMatchesNotePolicy(t *testing.T) {
+func TestNoteModel(t *testing.T) {
 	var files []ModuleFile
-	for _, path := range []string{"../base.fga", "../../../../apps/notes/services/note/authz/notes.fga"} {
+	for _, path := range []string{"../base.yml", "../../../../apps/notes/services/note/authz/authz.yml"} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files = append(files, ModuleFile{Name: path, Contents: string(b)})
 	}
-	p, source, err := ParseModules(files)
+	m, source, err := ParseModules(files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +29,7 @@ func TestKitModelMatchesNotePolicy(t *testing.T) {
 	if _, reordered, _ := ParseModules([]ModuleFile{files[1], files[0]}); reordered != source {
 		t.Fatal("source depends on file order")
 	}
-	m, err := NewModel("kit", p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m.ID = "kit"
 
 	r := &memReader{}
 	for _, s := range []string{

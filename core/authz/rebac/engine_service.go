@@ -1,8 +1,11 @@
-// Package rebac is relationship-based authorization (Zanzibar / OpenFGA style)
-// embedded in a service: the authorization model is compiled from OpenFGA
-// module files (the base module + the app's), tuples live in the service's
+// Package rebac is relationship-based authorization (Zanzibar style) embedded in
+// a service: the authorization model is composed from YAML files (base.yml +
+// the service's authz/*.yml, see engine.File), tuples live in the service's
 // own database (schema "authz", migrations.FS applied with
 // migrate.UpInSchema), and checks run in-process.
+//
+// The same model also decides without stored tuples: NewRBAC evaluates it over
+// the relationships implied by each request (role, tenant, owner).
 //
 // Tenant roles are not stored: each check adds the caller's role from their
 // verified access token as a contextual tuple (tenant:<t>#<role>@user:<u>), so
@@ -29,8 +32,6 @@ import (
 	"core/uow"
 
 	"github.com/oklog/ulid/v2"
-	openfgav1 "github.com/openfga/api/proto/openfga/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Consistency of a read (Check, ListObjects).
@@ -268,6 +269,15 @@ func (e *Engine) WriteTuples(ctx context.Context, writes, deletes []TupleInput, 
 	return nil
 }
 
+// ReadTuples returns a page of the stored tuples matching f (offset paging,
+// for browsing) and how many match.
+func (e *Engine) ReadTuples(ctx context.Context, f store.TupleFilter, offset, limit int) ([]engine.Tuple, int64, error) {
+	if offset < 0 {
+		return nil, 0, apperr.Invalid("offset", "must be >= 0")
+	}
+	return e.store.ListTuples(ctx, f, offset, pageSize(limit))
+}
+
 // checker evaluates with the active model, the cache of the current revision
 // and the contextual tuples.
 func (e *Engine) checker(ctx context.Context, contextual []TupleInput, consistency Consistency) (*engine.Checker, error) {
@@ -336,9 +346,18 @@ func (e *Engine) ReadChanges(ctx context.Context, objectType string, afterSeq in
 	return changes, last, nil
 }
 
+// RecentChanges returns tuple changes before beforeSeq (0 = the latest),
+// newest first (e.g. to review who changed what).
+func (e *Engine) RecentChanges(ctx context.Context, objectType, tenantID string, beforeSeq int64, limit int) ([]store.Change, error) {
+	if beforeSeq < 0 {
+		return nil, apperr.Invalid("before_seq", "must be >= 0")
+	}
+	return e.store.RecentChanges(ctx, objectType, tenantID, beforeSeq, pageSize(limit))
+}
+
 // ---- models ----
 
-// LoadModules compiles the model from OpenFGA module files and, if it differs
+// LoadModules composes the model from its YAML files and, if it differs
 // from the active model, stores it as a new version and activates it. Returns
 // the active model id and whether a new version was activated. Call at startup.
 func (e *Engine) LoadModules(ctx context.Context, files []engine.ModuleFile) (string, bool, error) {
@@ -355,27 +374,26 @@ func (e *Engine) LoadModules(ctx context.Context, files []engine.ModuleFile) (st
 	return id, err == nil, err
 }
 
-// WriteModel stores a model written as one schema 1.1 DSL document, optionally
+// WriteModel stores a model written as one complete YAML file, optionally
 // activating it (tests and single-file models).
-func (e *Engine) WriteModel(ctx context.Context, dsl string, activate bool) (string, error) {
-	compiled, err := engine.ParseDSL(dsl)
+func (e *Engine) WriteModel(ctx context.Context, src string, activate bool) (string, error) {
+	compiled, err := engine.ParseYAML(src)
 	if err != nil {
 		return "", err
 	}
-	return e.writeModel(ctx, compiled, dsl, activate)
+	return e.writeModel(ctx, compiled, src, activate)
 }
 
-func (e *Engine) writeModel(ctx context.Context, compiled *openfgav1.AuthorizationModel, source string, activate bool) (string, error) {
+func (e *Engine) writeModel(ctx context.Context, compiled *engine.Model, source string, activate bool) (string, error) {
 	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
-	compiled.Id = id
-	raw, err := protojson.Marshal(compiled)
+	raw, err := compiled.MarshalJSON()
 	if err != nil {
 		return "", err
 	}
 
 	err = e.uow.Do(ctx, func(ctx context.Context) error {
 		if err := e.store.CreateModel(ctx, &store.StoredModel{
-			ID: id, SchemaVersion: compiled.GetSchemaVersion(), DSL: source, Model: raw, CreatedBy: actor(ctx),
+			ID: id, SchemaVersion: engine.SchemaVersion, DSL: source, Model: raw, CreatedBy: actor(ctx),
 		}); err != nil {
 			return err
 		}
@@ -406,6 +424,11 @@ func (e *Engine) ActivateModel(ctx context.Context, id string) error {
 	return nil
 }
 
+// ListModels returns the stored model versions, newest first (no source).
+func (e *Engine) ListModels(ctx context.Context, limit int) ([]store.StoredModel, error) {
+	return e.store.ListModels(ctx, pageSize(limit))
+}
+
 func (e *Engine) GetModel(ctx context.Context, id string) (*store.StoredModel, error) {
 	return e.store.GetModel(ctx, id)
 }
@@ -430,11 +453,7 @@ func (e *Engine) model(ctx context.Context, id string) (*engine.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p openfgav1.AuthorizationModel
-	if err := protojson.Unmarshal(stored.Model, &p); err != nil {
-		return nil, fmt.Errorf("decode authorization model %s: %w", id, err)
-	}
-	if m, err = engine.NewModel(id, &p); err != nil {
+	if m, err = engine.ModelFromJSON(id, stored.Model); err != nil {
 		return nil, err
 	}
 
@@ -498,7 +517,18 @@ func parseTuples(m *engine.Model, field string, in []TupleInput, validate bool) 
 	return out, nil
 }
 
+type actorKey struct{}
+
+// WithActor names who changes tuples in ctx (recorded in the changelog), e.g.
+// "admin:ops@example.com"; without it, the caller's identity or "service".
+func WithActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, actorKey{}, actor)
+}
+
 func actor(ctx context.Context) string {
+	if a, ok := ctx.Value(actorKey{}).(string); ok && a != "" {
+		return a
+	}
 	if id, ok := reqctx.IdentityFrom(ctx); ok && id.UserID != "" {
 		return "user:" + id.UserID
 	}

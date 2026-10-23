@@ -3,6 +3,7 @@ package main
 import (
 	"core/authz"
 	"core/authz/rebac"
+	"core/authz/rebac/engine"
 	"core/components/authzc"
 	"core/di"
 	"core/logger"
@@ -14,23 +15,24 @@ import (
 	"gorm.io/gorm"
 )
 
-// authzSetup: how the service authorizes. The embedded ReBAC engine
-// (core/authz/rebac: model in authz/*.fga, tuples in this service's database)
-// always records relationships; AUTHZ_ENFORCE picks who decides: this
-// service's RBAC policy (default) or the engine. Switching needs no backfill.
+// authzSetup: how the service authorizes. One model (authz/authz.yml) decides
+// in both modes; AUTHZ_ENFORCE picks what it sees: rbac (default) the
+// relationships implied by each request (role, tenant, owner), rebac the
+// relationships stored by the embedded engine too. The engine always records
+// relationships, so switching needs no backfill.
 type authzSetup struct {
 	// authzc.EnforceRBAC or authzc.EnforceReBAC
 	enforce string
+	model   *engine.Model
 	engine  *rebac.Engine
 }
 
-// authorizer: the engine when enforced, otherwise the static RBAC policy. Both
-// implement authz.Authorizer, so the service code is identical.
+// authorizer: both implement authz.Authorizer, so the service code is identical.
 func (a authzSetup) authorizer() authz.Authorizer {
 	if a.enforce == authzc.EnforceReBAC {
 		return a.engine.Authorizer()
 	}
-	return authz.NewRBAC(service.NotePolicy)
+	return rebac.NewRBAC(a.model)
 }
 
 // relationships: written by the engine in the caller's transaction.

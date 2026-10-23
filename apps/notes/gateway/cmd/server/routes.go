@@ -6,6 +6,7 @@ import (
 
 	"core/apperr"
 	"core/authn"
+	"core/authz/rebac"
 	"core/di"
 	"core/httpx"
 	"core/logger"
@@ -63,13 +64,15 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 }
 
 // registerAdminRoutes: the internal admin server (never published), for the
-// platform's admin service: /admin/v1/* behind the app's admin key.
-func registerAdminRoutes(r *gin.Engine, auth *authn.Module, l logger.Logger) {
+// platform's admin service: /admin/v1/* behind the app's admin key, with the
+// services' authorization engines under /admin/v1/authz.
+func registerAdminRoutes(r *gin.Engine, auth *authn.Module, authzAdmin *rebac.AdminProxy, l logger.Logger) {
 	r.Use(httpx.RequestID(), httpx.AccessLog(l))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	auth.AdminHTTP.RegisterRoutes(r)
+	authzAdmin.RegisterRoutes(r)
 	r.NoRoute(notFound)
 }
 

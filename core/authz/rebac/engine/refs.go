@@ -1,4 +1,4 @@
-// Package engine evaluates relationship-based authorization (Zanzibar / OpenFGA
+// Package engine evaluates relationship-based authorization (Zanzibar
 // style) over relation tuples: Check and ListObjects against an authorization
 // model, plus validation of models and tuples. It does no I/O itself: tuples are
 // read through TupleReader.

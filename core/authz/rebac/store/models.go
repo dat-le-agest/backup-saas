@@ -14,8 +14,8 @@ import (
 type StoredModel struct {
 	ID            string
 	SchemaVersion string
-	DSL           string
-	Model         []byte // protojson of openfgav1.AuthorizationModel
+	DSL           string // YAML source the model was compiled from
+	Model         []byte // compiled model (engine.Model JSON)
 	IsActive      bool
 	CreatedBy     string
 	CreatedAt     time.Time
@@ -71,4 +71,14 @@ func (s *Store) Activate(ctx context.Context, id string) error {
 		return apperr.ErrNotFound
 	}
 	return nil
+}
+
+// ListModels returns the stored models, newest first, without their source
+// and compiled form.
+func (s *Store) ListModels(ctx context.Context, limit int) ([]StoredModel, error) {
+	var out []StoredModel
+	err := s.db(ctx).Table(s.table("authorization_models")).
+		Select("id, schema_version, is_active, created_by, created_at").
+		Order("id DESC").Limit(limit).Scan(&out).Error
+	return out, err
 }

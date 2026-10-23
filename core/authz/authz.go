@@ -7,14 +7,14 @@
 //	err = az.Check(ctx, authz.Update, authz.Resource{Type: "note", ID: "42", TenantID: note.TenantID, OwnerID: note.CreatedBy})
 //
 // The interface is shaped like Zanzibar (subject from ctx, action, typed resource)
-// so the RBAC backend can later be swapped for a ReBAC one (OpenFGA, SpiceDB)
-// without touching service code. Tenant isolation does NOT rely on this package:
+// so RBAC (core/authz/rebac.NewRBAC) and ReBAC (the embedded engine) are
+// interchangeable without touching service code. Tenant isolation does NOT rely on this package:
 // repositories must filter by tenant regardless of the backend.
 package authz
 
 import "context"
 
-// Default tenant roles. Services may define more in their policy.
+// Default tenant roles (base model of core/authz/rebac).
 const (
 	RoleOwner  = "owner"
 	RoleAdmin  = "admin"
@@ -58,9 +58,4 @@ type Authorizer interface {
 	// Check returns nil if allowed, otherwise an error wrapping
 	// apperr.ErrUnauthenticated, apperr.ErrForbidden or apperr.ErrNotFound.
 	Check(ctx context.Context, action string, res Resource) error
-}
-
-// Perm is the policy key of an action on a resource type, e.g. "note.update".
-func Perm(resourceType, action string) string {
-	return resourceType + "." + action
 }

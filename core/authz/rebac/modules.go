@@ -10,24 +10,28 @@ import (
 	"core/authz/rebac/engine"
 )
 
-// the base module: user and tenant with its roles (owner, admin, member, viewer)
+// the base model: user and tenant with its roles (owner, admin, member, viewer)
 //
-//go:embed base.fga
-var baseModule string
+//go:embed base.yml
+var baseModel string
 
-// Modules returns the module files of a model: the base module (user, tenant)
-// and the app's *.fga files at the root of app (e.g. an embed.FS). Names are
-// stable ("base.fga", "app/<file>") so the same files give the same source.
+// Modules returns the files of a service's model: the base model (user,
+// tenant) and the *.yml / *.yaml files at the root of app (e.g. an embed.FS).
+// Names are stable ("base.yml", "app/<file>") so the same files give the same source.
 func Modules(app fs.FS) ([]engine.ModuleFile, error) {
-	paths, err := fs.Glob(app, "*.fga")
-	if err != nil {
-		return nil, err
+	var paths []string
+	for _, pattern := range []string{"*.yml", "*.yaml"} {
+		found, err := fs.Glob(app, pattern)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, found...)
 	}
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("rebac: no module (*.fga) in the app's model files")
+		return nil, fmt.Errorf("rebac: no model file (*.yml) in the service's model files")
 	}
 	sort.Strings(paths)
-	files := []engine.ModuleFile{{Name: "base.fga", Contents: baseModule}}
+	files := []engine.ModuleFile{{Name: "base.yml", Contents: baseModel}}
 	for _, p := range paths {
 		b, err := fs.ReadFile(app, p)
 		if err != nil {
@@ -36,4 +40,21 @@ func Modules(app fs.FS) ([]engine.ModuleFile, error) {
 		files = append(files, engine.ModuleFile{Name: path.Join("app", p), Contents: string(b)})
 	}
 	return files, nil
+}
+
+// LoadModel composes and validates the model of app's files with the base model.
+func LoadModel(app fs.FS) (*engine.Model, error) {
+	files, err := Modules(app)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := engine.ParseModules(files)
+	return m, err
+}
+
+// BaseModel is the base model alone (user, tenant roles, member management),
+// e.g. for core/authn's member checks.
+func BaseModel() (*engine.Model, error) {
+	m, _, err := engine.ParseModules([]engine.ModuleFile{{Name: "base.yml", Contents: baseModel}})
+	return m, err
 }

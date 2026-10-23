@@ -112,7 +112,7 @@ func run() error {
 
 	ui, built := web.Handler()
 	if !built {
-		logger.Warn("dashboard not built (platform/admin/web: npm run build): serving the API only")
+		logger.Warn("dashboard not built (make admin-web): serving the API only")
 	}
 	r.NoRoute(func(c *gin.Context) {
 		if built && c.Request.Method == http.MethodGet && !isAPI(c.Request.URL.Path) {

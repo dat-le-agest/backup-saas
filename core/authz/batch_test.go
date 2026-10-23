@@ -130,11 +130,7 @@ func TestCheckManyFallsBackToCheck(t *testing.T) {
 		t.Errorf("got %v after %v", errs, single.calls)
 	}
 
-	// RBAC and any other Authorizer
-	errs = CheckMany(as("u1", "t1", RoleViewer), NewRBAC(policy), []Request{{Read, note("1", "t1")}, {Update, note("1", "t1")}})
-	if errs[0] != nil || !errors.Is(errs[1], apperr.ErrForbidden) {
-		t.Errorf("rbac: %v", errs)
-	}
+	// any other Authorizer
 	errs = CheckMany(as("u1", "t1", ""), authorizerFunc(func(context.Context, string, Resource) error { return apperr.ErrForbidden }),
 		[]Request{{Read, note("1", "t1")}})
 	if !errors.Is(errs[0], apperr.ErrForbidden) {

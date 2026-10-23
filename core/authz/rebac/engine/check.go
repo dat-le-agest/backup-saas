@@ -6,11 +6,9 @@ import (
 	"fmt"
 
 	"core/apperr"
-
-	openfgav1 "github.com/openfga/api/proto/openfga/v1"
 )
 
-// DefaultMaxDepth bounds recursion (nested usersets, "x from y" chains), like OpenFGA.
+// DefaultMaxDepth bounds recursion (nested usersets, "from" chains).
 const DefaultMaxDepth = 25
 
 // ErrTooComplex: resolution needed more than the maximum depth. Treated as a
@@ -133,7 +131,7 @@ func (s *state) check(ctx context.Context, obj Object, rel string, depth int) (b
 
 	s.visiting[key] = true
 	cyclesBefore := s.cycles
-	res, err := s.eval(ctx, obj, rel, s.model.rewrite(obj.Type, rel), depth)
+	res, err := s.eval(ctx, obj, rel, s.model.rule(obj.Type, rel), depth)
 	delete(s.visiting, key)
 
 	// results computed while a cycle was cut may be incomplete: keep them for nobody
@@ -146,34 +144,32 @@ func (s *state) check(ctx context.Context, obj Object, rel string, depth int) (b
 	return res, err
 }
 
-func (s *state) eval(ctx context.Context, obj Object, rel string, us *openfgav1.Userset, depth int) (bool, error) {
+func (s *state) eval(ctx context.Context, obj Object, rel string, r *Rule, depth int) (bool, error) {
 	switch {
-	case isThis(us):
+	case r.Assignable != nil:
 		return s.direct(ctx, obj, rel, depth)
 
-	case us.GetComputedUserset() != nil:
-		return s.check(ctx, obj, us.GetComputedUserset().GetRelation(), depth+1)
+	case r.Computed != "":
+		return s.check(ctx, obj, r.Computed, depth+1)
 
-	case us.GetTupleToUserset() != nil:
-		ttu := us.GetTupleToUserset()
-		parents, err := s.reader.DirectObjects(ctx, obj, ttu.GetTupleset().GetRelation())
+	case r.From != nil:
+		parents, err := s.reader.DirectObjects(ctx, obj, r.From.Via)
 		if err != nil {
 			return false, err
 		}
 		return s.any(len(parents), func(i int) (bool, error) {
-			return s.check(ctx, parents[i], ttu.GetComputedUserset().GetRelation(), depth+1)
+			return s.check(ctx, parents[i], r.From.Relation, depth+1)
 		})
 
-	case us.GetUnion() != nil:
-		children := us.GetUnion().GetChild()
-		return s.any(len(children), func(i int) (bool, error) {
-			return s.eval(ctx, obj, rel, children[i], depth)
+	case r.Union != nil:
+		return s.any(len(r.Union), func(i int) (bool, error) {
+			return s.eval(ctx, obj, rel, &r.Union[i], depth)
 		})
 
-	case us.GetIntersection() != nil:
+	case r.Intersection != nil:
 		var firstErr error
-		for _, child := range us.GetIntersection().GetChild() {
-			ok, err := s.eval(ctx, obj, rel, child, depth)
+		for i := range r.Intersection {
+			ok, err := s.eval(ctx, obj, rel, &r.Intersection[i], depth)
 			switch {
 			case err != nil && firstErr == nil:
 				firstErr = err
@@ -183,18 +179,18 @@ func (s *state) eval(ctx context.Context, obj Object, rel string, us *openfgav1.
 		}
 		return firstErr == nil, firstErr
 
-	case us.GetDifference() != nil:
-		base, err := s.eval(ctx, obj, rel, us.GetDifference().GetBase(), depth)
+	case r.Exclude != nil:
+		base, err := s.eval(ctx, obj, rel, &r.Exclude.Base, depth)
 		if err != nil || !base {
 			return false, err
 		}
-		excluded, err := s.eval(ctx, obj, rel, us.GetDifference().GetSubtract(), depth)
+		excluded, err := s.eval(ctx, obj, rel, &r.Exclude.Subtract, depth)
 		if err != nil {
 			return false, err
 		}
 		return !excluded, nil
 	}
-	return false, errors.New("authz: unsupported rewrite")
+	return false, errors.New("authz: rule without a kind")
 }
 
 // direct: a tuple names the subject (or its wildcard), or names a userset the

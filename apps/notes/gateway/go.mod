@@ -3,12 +3,11 @@ module notes-gateway
 go 1.27.0
 
 require (
-	connectrpc.com/connect v1.21.0
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/redis/go-redis/v9 v9.23.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.72.0
-	golang.org/x/time v0.16.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -18,6 +17,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gin-contrib/sse v1.1.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect

@@ -4,10 +4,12 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
 
 	"core/authn"
+	"core/authz/rebac"
 	authnmigrations "core/authn/migrations"
 	"core/components/ginc"
 	"core/components/gormc"
@@ -18,6 +20,8 @@ import (
 	"core/sctx"
 	"notes-gateway/config"
 	"notes-gateway/internal/client"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func main() {
@@ -79,7 +83,8 @@ func run() error {
 		logger.Warn("no admin-api-key: the admin API refuses every request")
 	}
 
-	notes := client.NewNote(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentNoteClient))
+	noteClient := sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentNoteClient)
+	notes := client.NewNote(noteClient)
 	c, err := buildContainer(notes)
 	if err != nil {
 		return err
@@ -94,7 +99,13 @@ func run() error {
 		logger:            sc.Logger("http"),
 	})
 	admin := sctx.MustGetAs[ginc.GinComponent](sc, config.ComponentAdminGin)
-	registerAdminRoutes(admin.GetRouter(), auth, sc.Logger("admin-http"))
+	// the services' ReBAC engines, through this admin API: /admin/v1/authz/<service>/*
+	authzAdmin, err := rebac.NewAdminProxy(*adminKey, map[string]string{"note": noteClient.BaseURL()},
+		otelhttp.NewTransport(http.DefaultTransport), sc.Logger("authz-admin"))
+	if err != nil {
+		return err
+	}
+	registerAdminRoutes(admin.GetRouter(), auth, authzAdmin, sc.Logger("admin-http"))
 
 	if err := admin.Run(); err != nil {
 		return err

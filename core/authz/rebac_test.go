@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"core/apperr"
-	"core/reqctx"
 )
 
 type call struct{ object, relation, subject string }
@@ -70,11 +69,6 @@ func TestReBACGuardsBeforeAsking(t *testing.T) {
 	}
 	if err := az.Check(as("u1", "t2", ""), Read, res); !errors.Is(err, apperr.ErrNotFound) {
 		t.Errorf("other tenant: %v", err)
-	}
-	// without an app the store can't be chosen
-	noApp := reqctx.WithIdentity(context.Background(), reqctx.Identity{UserID: "u1", TenantID: "t1"})
-	if err := az.Check(noApp, Read, res); !errors.Is(err, apperr.ErrUnauthenticated) {
-		t.Errorf("no app: %v", err)
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("engine asked anyway: %v", f.calls)

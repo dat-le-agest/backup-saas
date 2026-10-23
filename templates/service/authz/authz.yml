@@ -1,0 +1,47 @@
+# Authorization of the note service, composed with the base model of
+# core/authz/rebac (user, tenant roles). Embedded in the binary (authz.go).
+#
+# It decides in both modes (AUTHZ_ENFORCE):
+#   rbac   over the relationships implied by each request: the caller's tenant
+#          role, the note's tenant and its creator (owner)
+#   rebac  over stored relationships too (e.g. a note shared with a user)
+#
+#   owner, admin  everything
+#   member        create, read all, update/delete own
+#   viewer        read all
+name: notes
+
+# notes: create and list (type-level checks ask the tenant)
+extend:
+  tenant:
+    relations:
+      can_create_note: member
+      can_read_note: viewer
+
+types:
+  note:
+    relations:
+      # note:<id>#tenant@tenant:<id> and note:<id>#owner@user:<id> on create
+      tenant: {assignable: [tenant]}
+      owner: {assignable: [user]}
+      # an owner keeps editing rights only while still a member of the tenant
+      # (a creator demoted to viewer can't edit their old notes)
+      owner_member:
+        intersection:
+          - owner
+          - from: {relation: member, via: tenant}
+      # assignable users: sharing a single note beyond the roles
+      editor:
+        union:
+          - assignable: [user]
+          - owner_member
+          - from: {relation: admin, via: tenant}
+      viewer:
+        union:
+          - assignable: [user, "user:*"]
+          - editor
+          - from: {relation: viewer, via: tenant}
+
+      can_read: viewer
+      can_update: editor
+      can_delete: editor

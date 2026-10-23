@@ -1,0 +1,29 @@
+# Base model of every service using core/authz/rebac, composed with the
+# service's own model file(s) (authz/*.yml): users and tenants with their roles.
+# A service adds its type-level relations to tenant with `extend`.
+#
+# Naming convention (core/authz.DefaultRelations):
+#   object-level  Check(action, {Type: t, ID: id})  →  t:id#can_<action>
+#   type-level    Check(action, {Type: t})          →  tenant:<tenant>#can_<action>_<t>
+#
+# Tenant roles are never stored: checks add the caller's role from their access
+# token (tenant:<id>#<role>@user:<id>).
+name: base
+types:
+  user: {}
+  tenant:
+    relations:
+      owner: {assignable: [user]}
+      admin:
+        union: [{assignable: [user]}, owner]
+      member:
+        union: [{assignable: [user]}, admin]
+      viewer:
+        union: [{assignable: [user]}, member]
+
+      # members of the tenant (core/authn): any role lists them, owners and
+      # admins manage them (owner-specific rules are in core/authn)
+      can_read_member: viewer
+      can_create_member: admin
+      can_update_member: admin
+      can_delete_member: admin

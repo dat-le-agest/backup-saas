@@ -1,5 +1,5 @@
-// Package web serves the admin dashboard: a React app (src/, Vite) built into
-// dist/ by `npm run build` and embedded in the binary.
+// Package web serves the admin dashboard: the React app in admin-dashboard/
+// (repo root), built into dist/ by `make admin-web` and embedded in the binary.
 package web
 
 import (

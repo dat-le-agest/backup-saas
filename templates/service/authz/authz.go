@@ -1,9 +1,9 @@
-// Package authz embeds the service's authorization model: OpenFGA module
-// files (*.fga), composed with the base module of core/authz/rebac and loaded
-// by the embedded engine at startup.
+// Package authz embeds the service's authorization model (authz.yml),
+// composed with the base model of core/authz/rebac. It decides in both modes:
+// RBAC (relationships implied by the request) and ReBAC (stored ones too).
 package authz
 
 import "embed"
 
-//go:embed *.fga
+//go:embed *.yml
 var FS embed.FS

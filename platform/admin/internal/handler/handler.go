@@ -14,6 +14,7 @@ import (
 	"admin/internal/model"
 	"admin/internal/service"
 	"core/apperr"
+	"core/authz/rebac"
 	"core/httpx"
 	"core/logger"
 	"core/response"
@@ -197,7 +198,9 @@ func (h *Handler) getApp(c *gin.Context) {
 }
 
 // paths of an app's admin API the dashboard may call (core/authn/httpapi.AdminHandler)
-var proxyPaths = regexp.MustCompile(`^/(stats|users|users/[^/]+(/(disabled|password))?|tenants|tenants/[^/]+(/members/[^/]+)?)$`)
+var proxyPaths = regexp.MustCompile(`^/(stats|users|users/[^/]+(/(disabled|password))?|tenants|tenants/[^/]+(/members/[^/]+)?` +
+	// the app's authorization engines (core/authz/rebac AdminProxy)
+	`|authz|authz/[^/]+/(models|models/[^/]+(/activate)?|tuples|check|list-objects|changes))$`)
 
 // proxy forwards /api/apps/:app/admin/<path> to the app's /admin/v1/<path>
 // with the app's admin key, which never reaches the browser.
@@ -221,6 +224,8 @@ func (h *Handler) proxy(c *gin.Context) {
 			r.Out.URL.RawPath = ""
 			r.Out.Header.Del("Cookie")
 			r.Out.Header.Set("Authorization", "Bearer "+app.APIKey)
+			// changes of authorization tuples are recorded as this admin's
+			r.Out.Header.Set(rebac.ActorHeader, current(c).Email)
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.WithContext(r.Context(), h.logger).Errorf("admin API of %s: %v", app.ID, err)

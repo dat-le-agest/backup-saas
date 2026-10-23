@@ -8,20 +8,10 @@ import (
 	"core/reqctx"
 )
 
-// RelationChecker asks a relationship-based authorization service (the kit's
-// engine, core/authz/rebac) whether subject has relation on object. Strings use the
-// "type:id" / "type:id#relation" notation. core does not depend on generated
-// clients: services adapt theirs with CheckFunc:
-//
-//	client := rpcc.New(cc, authzv1connect.NewAuthzServiceClient)
-//	az := authz.NewReBAC(authz.CheckFunc(func(ctx context.Context, object, relation, subject string, c authz.Consistency) (bool, error) {
-//		app, err := authz.AppFrom(ctx) // the caller's app: its store
-//		if err != nil {
-//			return false, err
-//		}
-//		res, err := client.Check(ctx, &authzv1.CheckRequest{App: app, Object: object, Relation: relation, Subject: subject, Consistency: ...})
-//		return res.GetAllowed(), err
-//	}))
+// RelationChecker asks a relationship-based authorization engine (e.g. the
+// embedded core/authz/rebac, whose Engine.Authorizer wires this) whether
+// subject has relation on object. Strings use the "type:id" /
+// "type:id#relation" notation.
 type RelationChecker interface {
 	Check(ctx context.Context, object, relation, subject string, c Consistency) (bool, error)
 }
@@ -68,7 +58,7 @@ func isFresh(ctx context.Context) bool {
 type RelationMapper func(action string, res Resource) (object, relation string)
 
 // DefaultRelations is the kit's naming convention between Check(action, resource)
-// and the authorization model (core/authz/rebac/base.fga + the service's authz/*.fga):
+// and the authorization model (core/authz/rebac/base.yml + the service's authz/*.yml):
 //
 //	object-level  Check(Update, {Type: "note", ID: "42"})      → note:42#can_update
 //	type-level    Check(Create, {Type: "note", TenantID: "t"}) → tenant:t#can_create_note
@@ -108,7 +98,7 @@ func actionSet(actions []string) map[string]bool {
 }
 
 // NewReBAC returns an Authorizer that delegates decisions to a ReBAC
-// service. Same contract as NewRBAC: the caller (user) comes from ctx, errors
+// engine. The caller (user) comes from ctx, errors
 // wrap apperr sentinels, and a failing engine denies (fail closed).
 //
 // Unlike RBAC it ignores Resource.OwnerID: ownership is a tuple (note:42#owner@user:u)
@@ -146,26 +136,32 @@ type query struct {
 	fresh           bool
 }
 
-// prepare runs the local guards (identity, tenant) and maps the request to a relation.
-func (r *rebac) prepare(ctx context.Context, action string, res Resource) (query, error) {
+// Guard runs the checks every authorizer makes before deciding: a caller, a
+// selected tenant, and a resource of that tenant (another tenant's resource
+// looks missing: defense in depth, repositories and row-level security already
+// scope reads to the caller's tenant). It returns res with TenantID set.
+func Guard(ctx context.Context, res Resource) (reqctx.Identity, Resource, error) {
 	id, ok := reqctx.IdentityFrom(ctx)
 	if !ok || id.UserID == "" {
-		return query{}, fmt.Errorf("%w: no caller identity", apperr.ErrUnauthenticated)
+		return id, res, fmt.Errorf("%w: no caller identity", apperr.ErrUnauthenticated)
 	}
 	if id.TenantID == "" {
-		return query{}, fmt.Errorf("%w: no tenant selected", apperr.ErrForbidden)
+		return id, res, fmt.Errorf("%w: no tenant selected", apperr.ErrForbidden)
 	}
-	if id.AppID == "" {
-		// the app's store can't be chosen: deny
-		return query{}, fmt.Errorf("%w: %v", apperr.ErrUnauthenticated, errNoApp)
-	}
-	// same defense in depth as RBAC: another tenant's resource looks missing.
-	// (Repositories and row-level security already scope reads to the caller's tenant.)
 	if res.TenantID != "" && res.TenantID != id.TenantID {
-		return query{}, apperr.ErrNotFound
+		return id, res, apperr.ErrNotFound
 	}
 	if res.TenantID == "" {
 		res.TenantID = id.TenantID
+	}
+	return id, res, nil
+}
+
+// prepare runs the local guards (identity, tenant) and maps the request to a relation.
+func (r *rebac) prepare(ctx context.Context, action string, res Resource) (query, error) {
+	id, res, err := Guard(ctx, res)
+	if err != nil {
+		return query{}, err
 	}
 
 	object, relation := r.relations(action, res)

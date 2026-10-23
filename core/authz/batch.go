@@ -40,15 +40,6 @@ func CheckMany(ctx context.Context, az Authorizer, reqs []Request) []error {
 	return errs
 }
 
-// RBAC decides locally: a batch is a loop.
-func (a *rbac) CheckMany(ctx context.Context, reqs []Request) []error {
-	errs := make([]error, len(reqs))
-	for i, r := range reqs {
-		errs[i] = a.Check(ctx, r.Action, r.Resource)
-	}
-	return errs
-}
-
 // MaxBatchChecks is how many relation checks the ReBAC engine accepts
 // per BatchCheck; larger batches are split.
 const MaxBatchChecks = 50

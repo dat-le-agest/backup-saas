@@ -11,86 +11,54 @@ import (
 	"core/apperr"
 )
 
-// memReader is an in-memory TupleReader.
-type memReader struct{ tuples []Tuple }
-
-func (m *memReader) HasDirect(_ context.Context, obj Object, rel string, s Subject) (bool, error) {
-	for _, t := range m.tuples {
-		if t.Object != obj || t.Relation != rel || t.Subject.Type != s.Type {
-			continue
-		}
-		if t.Subject == s || (s.Relation == "" && t.Subject.ID == "*") {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (m *memReader) Usersets(_ context.Context, obj Object, rel string) ([]Subject, error) {
-	var out []Subject
-	for _, t := range m.tuples {
-		if t.Object == obj && t.Relation == rel && t.Subject.Relation != "" {
-			out = append(out, t.Subject)
-		}
-	}
-	return out, nil
-}
-
-func (m *memReader) DirectObjects(_ context.Context, obj Object, rel string) ([]Object, error) {
-	var out []Object
-	for _, t := range m.tuples {
-		if t.Object == obj && t.Relation == rel && t.Subject.Relation == "" && !t.Subject.IsWildcard() {
-			out = append(out, t.Subject.Object())
-		}
-	}
-	return out, nil
-}
-
-func (m *memReader) BySubject(_ context.Context, s Subject) ([]Tuple, error) {
-	var out []Tuple
-	for _, t := range m.tuples {
-		if t.Subject == s || (s.Relation == "" && t.Subject.Type == s.Type && t.Subject.ID == "*") {
-			out = append(out, t)
-		}
-	}
-	return out, nil
-}
+// memReader is the package's in-memory TupleReader.
+type memReader = MemReader
 
 const kitModel = `
-model
-  schema 1.1
-type user
-type tenant
-  relations
-    define owner: [user]
-    define admin: [user] or owner
-    define member: [user] or admin
-    define suspended: [user]
-type team
-  relations
-    define tenant: [tenant]
-    define member: [user, team#member]
-type note
-  relations
-    define tenant: [tenant]
-    define owner: [user]
-    define editor: [user, team#member] or owner or admin from tenant
-    define viewer: [user, user:*, team#member] or editor or member from tenant
-    define can_view: viewer but not suspended from tenant
-    define can_edit: editor and member from tenant
-    define can_delete: owner or admin from tenant
+name: kit
+types:
+  user: {}
+  tenant:
+    relations:
+      owner: {assignable: [user]}
+      admin: {union: [{assignable: [user]}, owner]}
+      member: {union: [{assignable: [user]}, admin]}
+      suspended: {assignable: [user]}
+  team:
+    relations:
+      tenant: {assignable: [tenant]}
+      member: {assignable: [user, "team#member"]}
+  note:
+    relations:
+      tenant: {assignable: [tenant]}
+      owner: {assignable: [user]}
+      editor:
+        union:
+          - assignable: [user, "team#member"]
+          - owner
+          - from: {relation: admin, via: tenant}
+      viewer:
+        union:
+          - assignable: [user, "user:*", "team#member"]
+          - editor
+          - from: {relation: member, via: tenant}
+      can_view:
+        exclude:
+          base: viewer
+          subtract: {from: {relation: suspended, via: tenant}}
+      can_edit:
+        intersection: [editor, {from: {relation: member, via: tenant}}]
+      can_delete:
+        union: [owner, {from: {relation: admin, via: tenant}}]
 `
 
-func mustModel(t *testing.T, dsl string) *Model {
+func mustModel(t *testing.T, src string) *Model {
 	t.Helper()
-	p, err := ParseDSL(dsl)
+	m, err := ParseYAML(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewModel("m1", p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m.ID = "m1"
 	return m
 }
 
@@ -324,18 +292,65 @@ func TestValidateTuple(t *testing.T) {
 
 func TestModelValidation(t *testing.T) {
 	bad := map[string]string{
-		"unknown computed relation": "model\n  schema 1.1\ntype user\ntype doc\n  relations\n    define viewer: editor\n",
-		"unknown type in [..]":      "model\n  schema 1.1\ntype doc\n  relations\n    define viewer: [user]\n",
-		"tupleset not direct": "model\n  schema 1.1\ntype user\ntype folder\n  relations\n    define viewer: [user]\n" +
-			"type doc\n  relations\n    define parent: [folder]\n    define alias: parent\n    define viewer: viewer from alias\n",
-		"conditions": "model\n  schema 1.1\ntype user\ntype doc\n  relations\n    define viewer: [user with ok]\n" +
-			"condition ok(x: int) {\n  x < 10\n}\n",
-		"not even DSL": "this is not a model",
+		"unknown computed relation": "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      viewer: editor\n",
+		"unknown assignable type":   "name: m\ntypes:\n  doc:\n    relations:\n      viewer: {assignable: [user]}\n",
+		"unknown userset relation":  "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      viewer: {assignable: [\"user#member\"]}\n",
+		"via not assignable": "name: m\ntypes:\n  user: {}\n  folder:\n    relations:\n      viewer: {assignable: [user]}\n" +
+			"  doc:\n    relations:\n      parent: {assignable: [folder]}\n      alias: parent\n      viewer: {from: {relation: viewer, via: alias}}\n",
+		"via holds usersets": "name: m\ntypes:\n  user: {}\n  team:\n    relations:\n      member: {assignable: [user]}\n" +
+			"  doc:\n    relations:\n      group: {assignable: [\"team#member\"]}\n      viewer: {from: {relation: member, via: group}}\n",
+		"no type defines target": "name: m\ntypes:\n  user: {}\n  folder: {}\n  doc:\n    relations:\n      parent: {assignable: [folder]}\n      viewer: {from: {relation: viewer, via: parent}}\n",
+		"two kinds":              "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      owner: {assignable: [user]}\n      viewer: {assignable: [user], computed: owner}\n",
+		"no kind":                "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      viewer: {}\n",
+		"union of one":           "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      owner: {assignable: [user]}\n      viewer: {union: [owner]}\n",
+		"unknown rule key":       "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      viewer: {direct: [user]}\n",
+		"unknown file key":       "name: m\ntype: {}\n",
+		"bad type name":          "name: m\ntypes:\n  Doc: {}\n",
+		"bad subject":            "name: m\ntypes:\n  user: {}\n  doc:\n    relations:\n      viewer: {assignable: [\"user:x\"]}\n",
+		"missing name":           "types:\n  user: {}\n",
+		"not even YAML":          "this: [is not",
 	}
-	for name, dsl := range bad {
-		if _, err := ParseDSL(dsl); !errors.Is(err, apperr.ErrInvalid) {
+	for name, src := range bad {
+		if _, err := ParseYAML(src); !errors.Is(err, apperr.ErrInvalid) {
 			t.Errorf("%s: expected invalid, got %v", name, err)
 		}
+	}
+}
+
+// A model is composed of files: types first, then extend; clashes are errors.
+func TestParseModules(t *testing.T) {
+	base := ModuleFile{Name: "base.yml", Contents: "name: base\ntypes:\n  user: {}\n  tenant:\n    relations:\n      member: {assignable: [user]}\n"}
+	app := ModuleFile{Name: "app/notes.yml", Contents: "name: notes\nextend:\n  tenant:\n    relations:\n      can_create_note: member\n" +
+		"types:\n  note:\n    relations:\n      tenant: {assignable: [tenant]}\n      can_read: {from: {relation: member, via: tenant}}\n"}
+	m, source, err := ParseModules([]ModuleFile{app, base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.HasRelation("tenant", "can_create_note") || !m.HasRelation("note", "can_read") {
+		t.Fatal("extend or app type missing")
+	}
+	if _, again, _ := ParseModules([]ModuleFile{base, app}); again != source {
+		t.Fatal("source depends on file order")
+	}
+
+	// stored as JSON and loaded back
+	raw, _ := m.MarshalJSON()
+	back, err := ModelFromJSON("m2", raw)
+	if err != nil || !back.HasRelation("tenant", "can_create_note") || back.ID != "m2" {
+		t.Fatalf("json round trip: %v", err)
+	}
+
+	clash := ModuleFile{Name: "app/other.yml", Contents: "name: other\nextend:\n  tenant:\n    relations:\n      member: {assignable: [user]}\n"}
+	if _, _, err := ParseModules([]ModuleFile{base, clash}); !errors.Is(err, apperr.ErrInvalid) {
+		t.Errorf("redefining a relation: %v", err)
+	}
+	dupType := ModuleFile{Name: "app/dup.yml", Contents: "name: dup\ntypes:\n  user: {}\n"}
+	if _, _, err := ParseModules([]ModuleFile{base, dupType}); !errors.Is(err, apperr.ErrInvalid) {
+		t.Errorf("type defined twice: %v", err)
+	}
+	unknown := ModuleFile{Name: "app/x.yml", Contents: "name: x\nextend:\n  folder:\n    relations:\n      r: {assignable: [user]}\n"}
+	if _, _, err := ParseModules([]ModuleFile{base, unknown}); !errors.Is(err, apperr.ErrInvalid) {
+		t.Errorf("extending an unknown type: %v", err)
 	}
 }
 
