@@ -207,7 +207,7 @@ func noteObject(n *model.Note) string {
 }
 
 // noteTuples: a note belongs to its tenant and is owned by its creator
-// (relations "tenant" and "owner" of type note in deploy/authz/model.fga).
+// (relations "tenant" and "owner" of type note in apps/notes/authz/notes.fga).
 func noteTuples(n *model.Note) []authz.Tuple {
 	object := noteObject(n)
 	return []authz.Tuple{

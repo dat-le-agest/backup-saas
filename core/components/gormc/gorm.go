@@ -41,6 +41,11 @@ type GormComponent interface {
 	GetDB() *gorm.DB
 	// MigrateOnly is true for --db-migrate=only: main should exit after Load.
 	MigrateOnly() bool
+	// MigrateMode is auto | only | off (--db-migrate), for migrations a service
+	// applies itself (e.g. per schema, migrate.UpInSchema).
+	MigrateMode() string
+	// DSN of the database, to open connections with other settings (migrate.UpInSchema).
+	DSN() string
 }
 
 type Option func(*gormDB)
@@ -179,6 +184,10 @@ func (gdb *gormDB) Stop() error {
 func (gdb *gormDB) MigrateOnly() bool {
 	return gdb.migrateMode == MigrateOnly
 }
+
+func (gdb *gormDB) MigrateMode() string { return gdb.migrateMode }
+
+func (gdb *gormDB) DSN() string { return gdb.dsn }
 
 func (gdb *gormDB) GetDB() *gorm.DB {
 	if gdb.logLevel == "debug" {

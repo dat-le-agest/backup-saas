@@ -1,0 +1,21 @@
+module platform
+
+# Platform module of every app's authorization model: the authz service
+# composes it with the app's module (apps/<app>/authz/*.fga) into the model of
+# the app's store, and activates it on start when the files changed.
+#
+# Naming convention (sdk/authz.DefaultRelations, platform/sdk/authz):
+#   object-level  Check(action, {Type: t, ID: id})  →  t:id#can_<action>
+#   type-level    Check(action, {Type: t})          →  tenant:<tenant>#can_<action>_<t>
+# An app adds its type-level relations to tenant with `extend type tenant`.
+
+type user
+
+# iam memberships become tuples in the store of the tenant's app:
+# tenant:<id>#<role>@user:<id>
+type tenant
+  relations
+    define owner: [user]
+    define admin: [user] or owner
+    define member: [user] or admin
+    define viewer: [user] or member

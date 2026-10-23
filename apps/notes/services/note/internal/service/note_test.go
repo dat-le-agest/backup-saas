@@ -59,7 +59,7 @@ func (f *fakeRepo) Delete(_ context.Context, id uint) error {
 }
 
 func as(userID, role string) context.Context {
-	return reqctx.WithIdentity(context.Background(), reqctx.Identity{UserID: userID, TenantID: "t1", Role: role})
+	return reqctx.WithIdentity(context.Background(), reqctx.Identity{AppID: "notes", UserID: userID, TenantID: "t1", Role: role})
 }
 
 func newSvc(repo *fakeRepo) *NoteService {

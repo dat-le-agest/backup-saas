@@ -7,6 +7,7 @@ import (
 
 	"core/logger"
 	"core/outbox"
+	"core/reqctx"
 	"core/testdb"
 	"core/uow"
 	"sdk/authz"
@@ -23,7 +24,9 @@ func TestRelationshipsGoThroughTheOutbox(t *testing.T) {
 	rel := authz.NewOutboxRelationships(ob)
 
 	owner := authz.Tuple{Object: "note:1", Relation: "owner", Subject: "user:u1", TenantID: "t1"}
-	err := u.Do(context.Background(), func(ctx context.Context) error {
+	// the caller's app decides the store the changes go to
+	caller := reqctx.WithIdentity(context.Background(), reqctx.Identity{AppID: "notes", UserID: "u1", TenantID: "t1"})
+	err := u.Do(caller, func(ctx context.Context) error {
 		if err := rel.Write(ctx, owner, authz.Tuple{Object: "note:1", Relation: "tenant", Subject: "tenant:t1", TenantID: "t1"}); err != nil {
 			return err
 		}
@@ -45,12 +48,12 @@ func TestRelationshipsGoThroughTheOutbox(t *testing.T) {
 	if n, err := relay.RunOnce(context.Background()); err != nil || n != 3 {
 		t.Fatalf("relay: %d %v", n, err)
 	}
-	if len(got) != 3 || len(got[0].Writes) != 2 || got[1].Deletes[0] != owner || got[2].DeleteObjects[0] != "note:1" {
+	if len(got) != 3 || len(got[0].Writes) != 2 || got[1].Deletes[0] != owner || got[2].DeleteObjects[0] != "note:1" || got[0].App != "notes" {
 		t.Fatalf("delivered %+v", got)
 	}
 
 	// outside a unit of work the change is refused, never written half-way
-	if err := rel.Write(context.Background(), owner); !errors.Is(err, outbox.ErrNotInTransaction) {
+	if err := rel.Write(caller, owner); !errors.Is(err, outbox.ErrNotInTransaction) {
 		t.Fatalf("outside uow: %v", err)
 	}
 }

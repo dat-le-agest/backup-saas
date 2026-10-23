@@ -15,7 +15,11 @@ import (
 //
 //	client := rpcc.New(cc, authzv1connect.NewAuthzServiceClient)
 //	az := authz.NewReBAC(authz.CheckFunc(func(ctx context.Context, object, relation, subject string, c authz.Consistency) (bool, error) {
-//		res, err := client.Check(ctx, &authzv1.CheckRequest{Object: object, Relation: relation, Subject: subject, Consistency: ...})
+//		app, err := authz.AppFrom(ctx) // the caller's app: its store
+//		if err != nil {
+//			return false, err
+//		}
+//		res, err := client.Check(ctx, &authzv1.CheckRequest{App: app, Object: object, Relation: relation, Subject: subject, Consistency: ...})
 //		return res.GetAllowed(), err
 //	}))
 type RelationChecker interface {
@@ -64,7 +68,7 @@ func isFresh(ctx context.Context) bool {
 type RelationMapper func(action string, res Resource) (object, relation string)
 
 // DefaultRelations is the kit's naming convention between Check(action, resource)
-// and the authorization model (deploy/authz/model.fga):
+// and the authorization model (platform/authz/model, apps/<app>/authz):
 //
 //	object-level  Check(Update, {Type: "note", ID: "42"})      → note:42#can_update
 //	type-level    Check(Create, {Type: "note", TenantID: "t"}) → tenant:t#can_create_note
@@ -150,6 +154,10 @@ func (r *rebac) prepare(ctx context.Context, action string, res Resource) (query
 	}
 	if id.TenantID == "" {
 		return query{}, fmt.Errorf("%w: no tenant selected", apperr.ErrForbidden)
+	}
+	if id.AppID == "" {
+		// the app's store can't be chosen: deny
+		return query{}, fmt.Errorf("%w: %v", apperr.ErrUnauthenticated, errNoApp)
 	}
 	// same defense in depth as RBAC: another tenant's resource looks missing.
 	// (Repositories and row-level security already scope reads to the caller's tenant.)

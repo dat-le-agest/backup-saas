@@ -269,7 +269,7 @@ func (s *MemberService) keepAnOwner(ctx context.Context, target *model.Membershi
 // the gateway may accept old tokens until the cached key expires (≤ access token TTL).
 func (s *MemberService) publish(ctx context.Context, tenantID, userID string, version int64) {
 	uow.AfterCommit(ctx, func(ctx context.Context) {
-		if err := s.cache.SetMembershipVersion(ctx, tenantID, userID, version); err != nil {
+		if err := s.cache.SetMembershipVersion(ctx, AppOf(ctx), tenantID, userID, version); err != nil {
 			logger.WithContext(ctx, s.logger).WithFields(logger.Fields{"member_tenant_id": tenantID, "member_user_id": userID}).
 				Errorf("publish membership version: %v", err)
 		}
@@ -283,7 +283,7 @@ func validateRole(role string) error {
 	return nil
 }
 
-// roleTuple: a membership as a relationship (type tenant in deploy/authz/model.fga,
+// roleTuple: a membership as a relationship (type tenant in platform/authz/model/platform.fga,
 // whose relations are the role names).
 func roleTuple(tenantID, userID, role string) authz.Tuple {
 	return authz.Tuple{Object: "tenant:" + tenantID, Relation: role, Subject: "user:" + userID, TenantID: tenantID}

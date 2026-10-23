@@ -9,9 +9,9 @@ import "google/protobuf/timestamp.proto";
 // tokens with iam's JWKS (GET /.well-known/jwks.json on the iam service).
 //
 // Users are global (one account for every app). Every token is issued for one
-// app (its audience, the "app" of the sign-in request) and tenants belong to
-// one app: a token only reaches tenants of its app. Apps are registered from
-// iam's configuration (--apps).
+// app (its audience, the "app" of the sign-in request); tenants, memberships and
+// refresh tokens live in the app's own schema, so a token only reaches tenants
+// of its app. Apps are registered from the platform configuration (PLATFORM_APPS).
 //
 // Caller identity (app, user, tenant, role) comes from the X-App-Id / X-User-Id /
 // X-Tenant-Id / X-Tenant-Role metadata set by a gateway from a verified access token.
@@ -180,6 +180,8 @@ message RevokeRefreshTokenResponse {}
 message GetMembershipVersionRequest {
   string tenant_id = 1;
   string user_id = 2;
+  // App of the tenant (the token's audience).
+  string app_id = 3;
 }
 
 message GetMembershipVersionResponse {

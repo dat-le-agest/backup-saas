@@ -46,9 +46,6 @@ const (
 	// AuthzServiceReadChangesProcedure is the fully-qualified name of the AuthzService's ReadChanges
 	// RPC.
 	AuthzServiceReadChangesProcedure = "/platform.authz.v1.AuthzService/ReadChanges"
-	// AuthzServiceWriteAuthorizationModelProcedure is the fully-qualified name of the AuthzService's
-	// WriteAuthorizationModel RPC.
-	AuthzServiceWriteAuthorizationModelProcedure = "/platform.authz.v1.AuthzService/WriteAuthorizationModel"
 	// AuthzServiceActivateAuthorizationModelProcedure is the fully-qualified name of the AuthzService's
 	// ActivateAuthorizationModel RPC.
 	AuthzServiceActivateAuthorizationModelProcedure = "/platform.authz.v1.AuthzService/ActivateAuthorizationModel"
@@ -77,9 +74,8 @@ type AuthzServiceClient interface {
 	// indexes in sync. Sequence numbers are assigned at write time and may commit
 	// slightly out of order: re-read a small window before last_seq.
 	ReadChanges(context.Context, *v1.ReadChangesRequest) (*v1.ReadChangesResponse, error)
-	// Stores a new model version from DSL; optionally activates it.
-	WriteAuthorizationModel(context.Context, *v1.WriteAuthorizationModelRequest) (*v1.WriteAuthorizationModelResponse, error)
-	// Makes a stored model version the active one.
+	// Makes a stored model version of the app the active one (e.g. a rollback;
+	// the next start activates the files again if they differ).
 	ActivateAuthorizationModel(context.Context, *v1.ActivateAuthorizationModelRequest) (*v1.ActivateAuthorizationModelResponse, error)
 	// A model version, or the active one when id is empty.
 	GetAuthorizationModel(context.Context, *v1.GetAuthorizationModelRequest) (*v1.GetAuthorizationModelResponse, error)
@@ -126,12 +122,6 @@ func NewAuthzServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(authzServiceMethods.ByName("ReadChanges")),
 			connect.WithClientOptions(opts...),
 		),
-		writeAuthorizationModel: connect.NewClient[v1.WriteAuthorizationModelRequest, v1.WriteAuthorizationModelResponse](
-			httpClient,
-			baseURL+AuthzServiceWriteAuthorizationModelProcedure,
-			connect.WithSchema(authzServiceMethods.ByName("WriteAuthorizationModel")),
-			connect.WithClientOptions(opts...),
-		),
 		activateAuthorizationModel: connect.NewClient[v1.ActivateAuthorizationModelRequest, v1.ActivateAuthorizationModelResponse](
 			httpClient,
 			baseURL+AuthzServiceActivateAuthorizationModelProcedure,
@@ -154,7 +144,6 @@ type authzServiceClient struct {
 	listObjects                *connect.Client[v1.ListObjectsRequest, v1.ListObjectsResponse]
 	writeTuples                *connect.Client[v1.WriteTuplesRequest, v1.WriteTuplesResponse]
 	readChanges                *connect.Client[v1.ReadChangesRequest, v1.ReadChangesResponse]
-	writeAuthorizationModel    *connect.Client[v1.WriteAuthorizationModelRequest, v1.WriteAuthorizationModelResponse]
 	activateAuthorizationModel *connect.Client[v1.ActivateAuthorizationModelRequest, v1.ActivateAuthorizationModelResponse]
 	getAuthorizationModel      *connect.Client[v1.GetAuthorizationModelRequest, v1.GetAuthorizationModelResponse]
 }
@@ -204,15 +193,6 @@ func (c *authzServiceClient) ReadChanges(ctx context.Context, req *v1.ReadChange
 	return nil, err
 }
 
-// WriteAuthorizationModel calls platform.authz.v1.AuthzService.WriteAuthorizationModel.
-func (c *authzServiceClient) WriteAuthorizationModel(ctx context.Context, req *v1.WriteAuthorizationModelRequest) (*v1.WriteAuthorizationModelResponse, error) {
-	response, err := c.writeAuthorizationModel.CallUnary(ctx, connect.NewRequest(req))
-	if response != nil {
-		return response.Msg, err
-	}
-	return nil, err
-}
-
 // ActivateAuthorizationModel calls platform.authz.v1.AuthzService.ActivateAuthorizationModel.
 func (c *authzServiceClient) ActivateAuthorizationModel(ctx context.Context, req *v1.ActivateAuthorizationModelRequest) (*v1.ActivateAuthorizationModelResponse, error) {
 	response, err := c.activateAuthorizationModel.CallUnary(ctx, connect.NewRequest(req))
@@ -251,9 +231,8 @@ type AuthzServiceHandler interface {
 	// indexes in sync. Sequence numbers are assigned at write time and may commit
 	// slightly out of order: re-read a small window before last_seq.
 	ReadChanges(context.Context, *v1.ReadChangesRequest) (*v1.ReadChangesResponse, error)
-	// Stores a new model version from DSL; optionally activates it.
-	WriteAuthorizationModel(context.Context, *v1.WriteAuthorizationModelRequest) (*v1.WriteAuthorizationModelResponse, error)
-	// Makes a stored model version the active one.
+	// Makes a stored model version of the app the active one (e.g. a rollback;
+	// the next start activates the files again if they differ).
 	ActivateAuthorizationModel(context.Context, *v1.ActivateAuthorizationModelRequest) (*v1.ActivateAuthorizationModelResponse, error)
 	// A model version, or the active one when id is empty.
 	GetAuthorizationModel(context.Context, *v1.GetAuthorizationModelRequest) (*v1.GetAuthorizationModelResponse, error)
@@ -296,12 +275,6 @@ func NewAuthzServiceHandler(svc AuthzServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(authzServiceMethods.ByName("ReadChanges")),
 		connect.WithHandlerOptions(opts...),
 	)
-	authzServiceWriteAuthorizationModelHandler := connect.NewUnaryHandlerSimple(
-		AuthzServiceWriteAuthorizationModelProcedure,
-		svc.WriteAuthorizationModel,
-		connect.WithSchema(authzServiceMethods.ByName("WriteAuthorizationModel")),
-		connect.WithHandlerOptions(opts...),
-	)
 	authzServiceActivateAuthorizationModelHandler := connect.NewUnaryHandlerSimple(
 		AuthzServiceActivateAuthorizationModelProcedure,
 		svc.ActivateAuthorizationModel,
@@ -326,8 +299,6 @@ func NewAuthzServiceHandler(svc AuthzServiceHandler, opts ...connect.HandlerOpti
 			authzServiceWriteTuplesHandler.ServeHTTP(w, r)
 		case AuthzServiceReadChangesProcedure:
 			authzServiceReadChangesHandler.ServeHTTP(w, r)
-		case AuthzServiceWriteAuthorizationModelProcedure:
-			authzServiceWriteAuthorizationModelHandler.ServeHTTP(w, r)
 		case AuthzServiceActivateAuthorizationModelProcedure:
 			authzServiceActivateAuthorizationModelHandler.ServeHTTP(w, r)
 		case AuthzServiceGetAuthorizationModelProcedure:
@@ -359,10 +330,6 @@ func (UnimplementedAuthzServiceHandler) WriteTuples(context.Context, *v1.WriteTu
 
 func (UnimplementedAuthzServiceHandler) ReadChanges(context.Context, *v1.ReadChangesRequest) (*v1.ReadChangesResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.authz.v1.AuthzService.ReadChanges is not implemented"))
-}
-
-func (UnimplementedAuthzServiceHandler) WriteAuthorizationModel(context.Context, *v1.WriteAuthorizationModelRequest) (*v1.WriteAuthorizationModelResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.authz.v1.AuthzService.WriteAuthorizationModel is not implemented"))
 }
 
 func (UnimplementedAuthzServiceHandler) ActivateAuthorizationModel(context.Context, *v1.ActivateAuthorizationModelRequest) (*v1.ActivateAuthorizationModelResponse, error) {

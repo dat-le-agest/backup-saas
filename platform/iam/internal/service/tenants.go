@@ -51,7 +51,7 @@ func (s *TenantService) Create(ctx context.Context, name string) (*model.Tenant,
 		return nil, err
 	}
 	uow.AfterCommit(ctx, func(ctx context.Context) {
-		_ = s.cache.SetMembershipVersion(ctx, tenant.ID, userID, owner.Version)
+		_ = s.cache.SetMembershipVersion(ctx, id.AppID, tenant.ID, userID, owner.Version)
 	})
 	return tenant, nil
 }
@@ -62,7 +62,7 @@ func (s *TenantService) ListMine(ctx context.Context) ([]model.MyTenant, error) 
 	if err != nil {
 		return nil, err
 	}
-	return s.store.ListTenantsForUser(ctx, id.AppID, id.UserID)
+	return s.store.ListTenantsForUser(ctx, id.UserID) // in the app of the caller's token
 }
 
 func callerUserID(ctx context.Context) (string, error) {

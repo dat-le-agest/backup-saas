@@ -1065,9 +1065,11 @@ func (*RevokeRefreshTokenResponse) Descriptor() ([]byte, []int) {
 }
 
 type GetMembershipVersionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	UserId   string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// App of the tenant (the token's audience).
+	AppId         string `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1112,6 +1114,13 @@ func (x *GetMembershipVersionRequest) GetTenantId() string {
 func (x *GetMembershipVersionRequest) GetUserId() string {
 	if x != nil {
 		return x.UserId
+	}
+	return ""
+}
+
+func (x *GetMembershipVersionRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
 	}
 	return ""
 }
@@ -1808,10 +1817,11 @@ const file_platform_iam_v1_iam_proto_rawDesc = "" +
 	"\x06tokens\x18\x01 \x01(\v2\x1a.platform.iam.v1.TokenPairR\x06tokens\"@\n" +
 	"\x19RevokeRefreshTokenRequest\x12#\n" +
 	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"\x1c\n" +
-	"\x1aRevokeRefreshTokenResponse\"S\n" +
+	"\x1aRevokeRefreshTokenResponse\"j\n" +
 	"\x1bGetMembershipVersionRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\tR\x06userId\"8\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06app_id\x18\x03 \x01(\tR\x05appId\"8\n" +
 	"\x1cGetMembershipVersionResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\")\n" +
 	"\x13CreateTenantRequest\x12\x12\n" +

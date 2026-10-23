@@ -69,7 +69,14 @@ func admin() (string, error) {
 // New returns a gorm DB on a new database. migrations, if any, are applied.
 func New(t testing.TB, migrations ...fs.FS) *gorm.DB {
 	t.Helper()
-	dbDSN := NewDSN(t)
+	return Open(t, NewDSN(t), migrations...)
+}
+
+// Open returns a gorm DB on dsn (from NewDSN) with migrations applied to the
+// default schema. Use it when the test also needs the DSN, e.g. to migrate
+// other schemas with migrate.UpInSchema.
+func Open(t testing.TB, dbDSN string, migrations ...fs.FS) *gorm.DB {
+	t.Helper()
 
 	// same settings as gormc.Open (not imported: gormc's own tests use testdb)
 	db, err := gorm.Open(postgres.Open(dbDSN), &gorm.Config{TranslateError: true})
@@ -151,3 +158,12 @@ func (nopLogger) Warnf(string, ...interface{})             {}
 func (nopLogger) Errorf(string, ...interface{})            {}
 func (l nopLogger) With(string, interface{}) logger.Logger { return l }
 func (l nopLogger) WithFields(logger.Fields) logger.Logger { return l }
+
+// UpInSchema applies migrations inside schema of the database of dsn (see
+// migrate.UpInSchema), failing the test on error.
+func UpInSchema(t testing.TB, dsn string, migrations fs.FS, schema string) {
+	t.Helper()
+	if err := migrate.UpInSchema(context.Background(), dsn, migrations, schema, nopLogger{}); err != nil {
+		t.Fatal(err)
+	}
+}

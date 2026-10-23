@@ -45,7 +45,7 @@ services:
       OTEL_SERVICE_NAME: note
       GIN_PORT: "3000"
       AUTHZ_SERVICE_URL: http://authz:3002 # sync note relationships to the authz service
-      AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-model + make authz-backfill
+      AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-backfill (model: apps/notes/authz)
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
 
   # public REST of the notes app (every route needs an access token)

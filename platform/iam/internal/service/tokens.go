@@ -78,6 +78,7 @@ func (s *TokenService) SwitchTenant(ctx context.Context, tenantID string) (*mode
 
 // login starts a new refresh token family in appID (a registered app).
 func (s *TokenService) login(ctx context.Context, userID, appID, tenantID string) (*model.TokenPair, error) {
+	ctx = InApp(ctx, appID)
 	var pair *model.TokenPair
 	err := s.uow.Do(ctx, func(ctx context.Context) error {
 		var err error
@@ -93,6 +94,19 @@ func (s *TokenService) Refresh(ctx context.Context, raw string) (*model.TokenPai
 	if raw == "" {
 		return nil, errInvalidRefresh
 	}
+
+	// the token's app: its schema holds the token family
+	app := refreshTokenApp(raw)
+	if app == "" {
+		return nil, errInvalidRefresh
+	}
+	if _, err := s.store.GetApp(ctx, app); err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, errInvalidRefresh
+		}
+		return nil, err
+	}
+	ctx = InApp(ctx, app)
 
 	var (
 		pair   *model.TokenPair
@@ -119,7 +133,7 @@ func (s *TokenService) Refresh(ctx context.Context, raw string) (*model.TokenPai
 			return s.store.RevokeRefreshTokenFamily(ctx, rt.FamilyID) // committed below
 		}
 
-		pair, err = s.issue(ctx, rt.UserID, rt.AppID, rt.TenantID, rt.FamilyID)
+		pair, err = s.issue(ctx, rt.UserID, app, rt.TenantID, rt.FamilyID)
 		if errors.Is(err, apperr.ErrNotFound) {
 			// membership removed meanwhile: end this session
 			if rerr := s.store.RevokeRefreshTokenFamily(ctx, rt.FamilyID); rerr != nil {
@@ -135,7 +149,7 @@ func (s *TokenService) Refresh(ctx context.Context, raw string) (*model.TokenPai
 	}
 	if reused != nil {
 		logger.WithContext(ctx, s.logger).WithFields(logger.Fields{
-			"user_id": reused.UserID, "tenant_id": reused.TenantID, "family_id": reused.FamilyID,
+			"app_id": app, "user_id": reused.UserID, "tenant_id": reused.TenantID, "family_id": reused.FamilyID,
 		}).Warn("refresh token reuse detected, family revoked")
 		s.metrics.refreshReuse.Add(ctx, 1)
 		return nil, errInvalidRefresh
@@ -148,6 +162,17 @@ func (s *TokenService) Refresh(ctx context.Context, raw string) (*model.TokenPai
 
 // Revoke ends the session of a refresh token (logout). Unknown tokens are ignored.
 func (s *TokenService) Revoke(ctx context.Context, raw string) error {
+	app := refreshTokenApp(raw)
+	if app == "" {
+		return nil
+	}
+	if _, err := s.store.GetApp(ctx, app); err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	ctx = InApp(ctx, app)
 	rt, err := s.store.GetRefreshToken(ctx, hashRefreshToken(raw))
 	if errors.Is(err, apperr.ErrNotFound) {
 		return nil
@@ -158,12 +183,16 @@ func (s *TokenService) Revoke(ctx context.Context, raw string) error {
 	return s.store.RevokeRefreshTokenFamily(ctx, rt.FamilyID)
 }
 
-// MembershipVersion returns the current version, apperr.ErrNotFound if not an active member.
-func (s *TokenService) MembershipVersion(ctx context.Context, tenantID, userID string) (int64, error) {
-	if tenantID == "" || userID == "" {
-		return 0, fmt.Errorf("%w: tenant_id and user_id are required", apperr.ErrInvalid)
+// MembershipVersion returns the current version of a membership of a tenant of
+// appID, apperr.ErrNotFound if not an active member.
+func (s *TokenService) MembershipVersion(ctx context.Context, appID, tenantID, userID string) (int64, error) {
+	if appID == "" || tenantID == "" || userID == "" {
+		return 0, fmt.Errorf("%w: app_id, tenant_id and user_id are required", apperr.ErrInvalid)
 	}
-	m, err := s.store.GetMembership(ctx, tenantID, userID)
+	if err := requireApp(ctx, s.store, appID); err != nil {
+		return 0, err
+	}
+	m, err := s.store.GetMembership(InApp(ctx, appID), tenantID, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -171,22 +200,16 @@ func (s *TokenService) MembershipVersion(ctx context.Context, tenantID, userID s
 }
 
 // issue signs an access token of appID with the membership's current role and
-// version, and stores a new refresh token in family. tenantID may be empty;
-// otherwise it must be a tenant of appID the user is an active member of.
+// version, and stores a new refresh token in family. ctx must be InApp(appID).
+// tenantID may be empty; otherwise the user must be an active member of it, in
+// appID's schema (a tenant of another app isn't there: not found).
 func (s *TokenService) issue(ctx context.Context, userID, appID, tenantID, family string) (*model.TokenPair, error) {
 	var (
 		role    string
 		version int64
 	)
 	if tenantID != "" {
-		// not a member, or a tenant of another app: indistinguishable from a missing tenant
-		tenant, err := s.store.GetTenant(ctx, tenantID)
-		if err != nil {
-			return nil, err
-		}
-		if tenant.AppID != appID {
-			return nil, apperr.ErrNotFound
-		}
+		// not a member: indistinguishable from a missing tenant
 		m, err := s.store.GetMembership(ctx, tenantID, userID)
 		if err != nil {
 			return nil, err
@@ -199,10 +222,10 @@ func (s *TokenService) issue(ctx context.Context, userID, appID, tenantID, famil
 		return nil, err
 	}
 
-	raw, hash := newRefreshToken()
+	raw, hash := newRefreshToken(appID)
 	refreshExp := s.now().Add(s.refreshTTL)
 	if err := s.store.CreateRefreshToken(ctx, &model.RefreshToken{
-		TokenHash: hash, FamilyID: family, AppID: appID, UserID: userID, TenantID: tenantID, ExpiresAt: refreshExp,
+		TokenHash: hash, FamilyID: family, UserID: userID, TenantID: tenantID, ExpiresAt: refreshExp,
 	}); err != nil {
 		return nil, err
 	}

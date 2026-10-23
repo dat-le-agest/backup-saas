@@ -47,9 +47,10 @@ func (c *Claims) AppID() string {
 const AnyAudience = "*"
 
 // MembershipVersionKey is the cache key (Redis) holding the current version of
-// a membership. iam writes it on every change; the gateway compares it with mv.
-func MembershipVersionKey(tenantID, userID string) string {
-	return "iam:mv:" + tenantID + ":" + userID
+// a membership of a tenant of appID. iam writes it on every change; gateways
+// compare it with mv.
+func MembershipVersionKey(appID, tenantID, userID string) string {
+	return "iam:mv:" + appID + ":" + tenantID + ":" + userID
 }
 
 // RemovedMembershipVersion is stored for memberships that no longer exist.

@@ -3,10 +3,25 @@ package authz
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"core/outbox"
+	"core/reqctx"
 )
+
+// AppFrom is the app whose store a check or a relationship change goes to: the
+// app of the caller's access token (set by every gateway). Adapters over the
+// generated authz client pass it as the request's app.
+func AppFrom(ctx context.Context) (string, error) {
+	id, _ := reqctx.IdentityFrom(ctx)
+	if id.AppID == "" {
+		return "", errNoApp
+	}
+	return id.AppID, nil
+}
+
+var errNoApp = errors.New("authz: no app in the caller identity")
 
 // Tuple is a relationship for the central authz service, in its notation:
 // object "note:42", relation "owner", subject "user:usr_1" or "team:eng#member".
@@ -43,8 +58,10 @@ func (NoRelationships) DeleteObjects(context.Context, ...string) error { return 
 // TuplesTopic is the outbox topic of relationship changes.
 const TuplesTopic = "authz.tuples"
 
-// TupleChanges is the payload of a TuplesTopic message.
+// TupleChanges is the payload of a TuplesTopic message. App is the store they
+// go to, taken from the caller when the change was made.
 type TupleChanges struct {
+	App           string   `json:"app"`
 	Writes        []Tuple  `json:"writes,omitempty"`
 	Deletes       []Tuple  `json:"deletes,omitempty"`
 	DeleteObjects []string `json:"delete_objects,omitempty"`
@@ -88,6 +105,11 @@ func (r *outboxRelationships) publish(ctx context.Context, c TupleChanges) error
 	default:
 		return nil
 	}
+	app, err := AppFrom(ctx)
+	if err != nil {
+		return err
+	}
+	c.App = app
 	return r.outbox.Publish(ctx, TuplesTopic, key, c)
 }
 
@@ -102,6 +124,9 @@ func DeliverTuples(write WriteTuplesFunc) outbox.Handler {
 		var c TupleChanges
 		if err := json.Unmarshal(m.Payload, &c); err != nil {
 			return fmt.Errorf("decode tuple changes: %w", err)
+		}
+		if c.App == "" {
+			return fmt.Errorf("tuple changes of message %d have no app", m.ID)
 		}
 		return write(ctx, c)
 	}

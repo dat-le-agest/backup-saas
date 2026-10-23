@@ -65,7 +65,12 @@ func newEnv(t *testing.T, devLogin bool) *env {
 func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzServiceClient) *env {
 	t.Helper()
 
-	db := testdb.New(t, migrations.FS) // real Postgres with the service's migrations
+	// real Postgres with the service's migrations: shared tables, then each app's schema
+	dsn := testdb.NewDSN(t)
+	db := testdb.Open(t, dsn, migrations.FS)
+	for _, app := range []string{testApp, otherApp} {
+		testdb.UpInSchema(t, dsn, migrations.AppFS, app)
+	}
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -86,7 +91,7 @@ func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzSer
 	if err != nil {
 		t.Fatal(err)
 	}
-	// testApp and otherApp, as iam registers its --iam-apps at startup
+	// testApp and otherApp, as iam registers PLATFORM_APPS at startup
 	if err := service.RegisterApps(context.Background(), di.MustGet[service.Store](c), []string{testApp, otherApp}); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +149,7 @@ func (e *env) claims(t *testing.T, access string) *token.Claims {
 
 func (e *env) cachedVersion(t *testing.T, tenantID, userID string) int64 {
 	t.Helper()
-	v, err := e.redis.Get(token.MembershipVersionKey(tenantID, userID))
+	v, err := e.redis.Get(token.MembershipVersionKey(testApp, tenantID, userID))
 	if err != nil {
 		t.Fatalf("no cached version for %s/%s", tenantID, userID)
 	}
@@ -311,14 +316,14 @@ func TestMemberManagementRules(t *testing.T) {
 	if v := e.cachedVersion(t, tenantID, "max"); v != token.RemovedMembershipVersion {
 		t.Fatalf("removed version: %d", v)
 	}
-	_, err := c.GetMembershipVersion(context.Background(), &iamv1.GetMembershipVersionRequest{TenantId: tenantID, UserId: "max"})
+	_, err := c.GetMembershipVersion(context.Background(), &iamv1.GetMembershipVersionRequest{AppId: testApp, TenantId: tenantID, UserId: "max"})
 	expect(t, "version after removal", err, apperr.ErrNotFound)
 
 	// re-adding continues the version sequence: tokens from before can never match again
 	if err := add(tokenFor("ann"), "max", authz.RoleMember); err != nil {
 		t.Fatal(err)
 	}
-	res, _ := c.GetMembershipVersion(context.Background(), &iamv1.GetMembershipVersionRequest{TenantId: tenantID, UserId: "max"})
+	res, _ := c.GetMembershipVersion(context.Background(), &iamv1.GetMembershipVersionRequest{AppId: testApp, TenantId: tenantID, UserId: "max"})
 	if res.GetVersion() <= 3 {
 		t.Fatalf("version restarted: %d", res.GetVersion())
 	}
@@ -753,6 +758,16 @@ func TestAppsIsolateTenants(t *testing.T) {
 	mine, _ = e.client.ListMyTenants(e.as(t, e.login(t, "alice", "").GetAccessToken()), &iamv1.ListMyTenantsRequest{})
 	if len(mine.GetTenants()) != 1 || mine.GetTenants()[0].GetTenant().GetId() != notesTenant || mine.GetTenants()[0].GetTenant().GetAppId() != testApp {
 		t.Fatalf("my tenants in %s: %v", testApp, mine)
+	}
+
+	// the refresh token names its app (the schema holding it); another prefix finds nothing
+	if !strings.HasPrefix(crm.GetRefreshToken(), otherApp+".") {
+		t.Fatalf("refresh token %q has no app prefix", crm.GetRefreshToken())
+	}
+	moved := testApp + strings.TrimPrefix(crm.GetRefreshToken(), otherApp)
+	for _, bad := range []string{moved, "nope." + strings.TrimPrefix(crm.GetRefreshToken(), otherApp+"."), "no-prefix"} {
+		_, err := e.client.RefreshTokens(ctx, &iamv1.RefreshTokensRequest{RefreshToken: bad})
+		expect(t, "refresh "+bad, err, apperr.ErrUnauthenticated)
 	}
 
 	// refresh keeps the app of the family

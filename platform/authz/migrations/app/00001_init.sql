@@ -1,5 +1,7 @@
--- Same schema as deploy/postgres/authz/init.sql (documented there), as the
--- service's first goose migration. Keep later changes in new migrations.
+-- Store of one app, created in the app's schema: authz runs this set once per
+-- app with search_path set to it (core/migrate.UpInSchema), and every trigger
+-- function is pinned to it (SET search_path FROM CURRENT), so apps share
+-- nothing. Concepts are documented in deploy/postgres/authz/init.sql.
 
 -- +goose Up
 -- =============================================================================
@@ -81,7 +83,7 @@ CREATE UNIQUE INDEX authorization_models_one_active
 -- models are append-only: a change is a new version
 -- +goose StatementBegin
 CREATE FUNCTION authorization_models_immutable() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 BEGIN
     IF NEW.dsl IS DISTINCT FROM OLD.dsl OR NEW.model IS DISTINCT FROM OLD.model
        OR NEW.schema_version IS DISTINCT FROM OLD.schema_version THEN
@@ -198,7 +200,7 @@ CREATE INDEX tuple_changes_changed_at ON tuple_changes USING brin (changed_at);
 
 -- +goose StatementBegin
 CREATE FUNCTION relation_tuples_log_change() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 DECLARE
     t relation_tuples;
     op text;
@@ -232,7 +234,7 @@ CREATE TRIGGER relation_tuples_log_change
 -- transaction, so the changelog shows both.
 -- +goose StatementBegin
 CREATE FUNCTION relation_tuples_immutable() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 BEGIN
     RAISE EXCEPTION 'relation tuples are immutable: delete and insert instead';
 END $$;

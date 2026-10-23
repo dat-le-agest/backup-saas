@@ -154,8 +154,10 @@ type CheckRequest struct {
 	// Empty: the active model.
 	AuthorizationModelId string      `protobuf:"bytes,4,opt,name=authorization_model_id,json=authorizationModelId,proto3" json:"authorization_model_id,omitempty"`
 	Consistency          Consistency `protobuf:"varint,5,opt,name=consistency,proto3,enum=platform.authz.v1.Consistency" json:"consistency,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,6,opt,name=app,proto3" json:"app,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CheckRequest) Reset() {
@@ -221,6 +223,13 @@ func (x *CheckRequest) GetConsistency() Consistency {
 		return x.Consistency
 	}
 	return Consistency_CONSISTENCY_UNSPECIFIED
+}
+
+func (x *CheckRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
 }
 
 type CheckResponse struct {
@@ -333,8 +342,10 @@ type BatchCheckRequest struct {
 	// Empty: the active model.
 	AuthorizationModelId string      `protobuf:"bytes,2,opt,name=authorization_model_id,json=authorizationModelId,proto3" json:"authorization_model_id,omitempty"`
 	Consistency          Consistency `protobuf:"varint,3,opt,name=consistency,proto3,enum=platform.authz.v1.Consistency" json:"consistency,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,4,opt,name=app,proto3" json:"app,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BatchCheckRequest) Reset() {
@@ -386,6 +397,13 @@ func (x *BatchCheckRequest) GetConsistency() Consistency {
 		return x.Consistency
 	}
 	return Consistency_CONSISTENCY_UNSPECIFIED
+}
+
+func (x *BatchCheckRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
 }
 
 type CheckError struct {
@@ -549,8 +567,10 @@ type ListObjectsRequest struct {
 	Limit                int32       `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
 	AuthorizationModelId string      `protobuf:"bytes,5,opt,name=authorization_model_id,json=authorizationModelId,proto3" json:"authorization_model_id,omitempty"`
 	Consistency          Consistency `protobuf:"varint,6,opt,name=consistency,proto3,enum=platform.authz.v1.Consistency" json:"consistency,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,7,opt,name=app,proto3" json:"app,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListObjectsRequest) Reset() {
@@ -625,6 +645,13 @@ func (x *ListObjectsRequest) GetConsistency() Consistency {
 	return Consistency_CONSISTENCY_UNSPECIFIED
 }
 
+func (x *ListObjectsRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
 type ListObjectsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// "type:id", sorted.
@@ -679,6 +706,8 @@ type WriteTuplesRequest struct {
 	// (doc:1#editor@team:eng#member when team:eng is deleted) is removed.
 	// Applied before deletes and writes.
 	DeleteObjects []string `protobuf:"bytes,3,rep,name=delete_objects,json=deleteObjects,proto3" json:"delete_objects,omitempty"`
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,4,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -734,6 +763,13 @@ func (x *WriteTuplesRequest) GetDeleteObjects() []string {
 	return nil
 }
 
+func (x *WriteTuplesRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
 type WriteTuplesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -776,7 +812,9 @@ type ReadChangesRequest struct {
 	ObjectType string `protobuf:"bytes,1,opt,name=object_type,json=objectType,proto3" json:"object_type,omitempty"`
 	AfterSeq   int64  `protobuf:"varint,2,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
 	// Default 100, max 1000.
-	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	Limit int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,4,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -830,6 +868,13 @@ func (x *ReadChangesRequest) GetLimit() int32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *ReadChangesRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
 }
 
 type TupleChange struct {
@@ -962,112 +1007,18 @@ func (x *ReadChangesResponse) GetLastSeq() int64 {
 	return 0
 }
 
-type WriteAuthorizationModelRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Dsl           string                 `protobuf:"bytes,1,opt,name=dsl,proto3" json:"dsl,omitempty"`
-	Activate      bool                   `protobuf:"varint,2,opt,name=activate,proto3" json:"activate,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WriteAuthorizationModelRequest) Reset() {
-	*x = WriteAuthorizationModelRequest{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WriteAuthorizationModelRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WriteAuthorizationModelRequest) ProtoMessage() {}
-
-func (x *WriteAuthorizationModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WriteAuthorizationModelRequest.ProtoReflect.Descriptor instead.
-func (*WriteAuthorizationModelRequest) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{15}
-}
-
-func (x *WriteAuthorizationModelRequest) GetDsl() string {
-	if x != nil {
-		return x.Dsl
-	}
-	return ""
-}
-
-func (x *WriteAuthorizationModelRequest) GetActivate() bool {
-	if x != nil {
-		return x.Activate
-	}
-	return false
-}
-
-type WriteAuthorizationModelResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WriteAuthorizationModelResponse) Reset() {
-	*x = WriteAuthorizationModelResponse{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WriteAuthorizationModelResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WriteAuthorizationModelResponse) ProtoMessage() {}
-
-func (x *WriteAuthorizationModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[16]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WriteAuthorizationModelResponse.ProtoReflect.Descriptor instead.
-func (*WriteAuthorizationModelResponse) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *WriteAuthorizationModelResponse) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
 type ActivateAuthorizationModelRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,2,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActivateAuthorizationModelRequest) Reset() {
 	*x = ActivateAuthorizationModelRequest{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[17]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1079,7 +1030,7 @@ func (x *ActivateAuthorizationModelRequest) String() string {
 func (*ActivateAuthorizationModelRequest) ProtoMessage() {}
 
 func (x *ActivateAuthorizationModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[17]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1092,12 +1043,19 @@ func (x *ActivateAuthorizationModelRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use ActivateAuthorizationModelRequest.ProtoReflect.Descriptor instead.
 func (*ActivateAuthorizationModelRequest) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{17}
+	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ActivateAuthorizationModelRequest) GetId() string {
 	if x != nil {
 		return x.Id
+	}
+	return ""
+}
+
+func (x *ActivateAuthorizationModelRequest) GetApp() string {
+	if x != nil {
+		return x.App
 	}
 	return ""
 }
@@ -1110,7 +1068,7 @@ type ActivateAuthorizationModelResponse struct {
 
 func (x *ActivateAuthorizationModelResponse) Reset() {
 	*x = ActivateAuthorizationModelResponse{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[18]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1122,7 +1080,7 @@ func (x *ActivateAuthorizationModelResponse) String() string {
 func (*ActivateAuthorizationModelResponse) ProtoMessage() {}
 
 func (x *ActivateAuthorizationModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[18]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1135,19 +1093,21 @@ func (x *ActivateAuthorizationModelResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use ActivateAuthorizationModelResponse.ProtoReflect.Descriptor instead.
 func (*ActivateAuthorizationModelResponse) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{18}
+	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{16}
 }
 
 type GetAuthorizationModelRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// App whose store is used, e.g. "notes".
+	App           string `protobuf:"bytes,2,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetAuthorizationModelRequest) Reset() {
 	*x = GetAuthorizationModelRequest{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[19]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1159,7 +1119,7 @@ func (x *GetAuthorizationModelRequest) String() string {
 func (*GetAuthorizationModelRequest) ProtoMessage() {}
 
 func (x *GetAuthorizationModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[19]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1172,12 +1132,19 @@ func (x *GetAuthorizationModelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAuthorizationModelRequest.ProtoReflect.Descriptor instead.
 func (*GetAuthorizationModelRequest) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{19}
+	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetAuthorizationModelRequest) GetId() string {
 	if x != nil {
 		return x.Id
+	}
+	return ""
+}
+
+func (x *GetAuthorizationModelRequest) GetApp() string {
+	if x != nil {
+		return x.App
 	}
 	return ""
 }
@@ -1194,7 +1161,7 @@ type GetAuthorizationModelResponse struct {
 
 func (x *GetAuthorizationModelResponse) Reset() {
 	*x = GetAuthorizationModelResponse{}
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[20]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1206,7 +1173,7 @@ func (x *GetAuthorizationModelResponse) String() string {
 func (*GetAuthorizationModelResponse) ProtoMessage() {}
 
 func (x *GetAuthorizationModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_authz_v1_authz_proto_msgTypes[20]
+	mi := &file_platform_authz_v1_authz_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +1186,7 @@ func (x *GetAuthorizationModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAuthorizationModelResponse.ProtoReflect.Descriptor instead.
 func (*GetAuthorizationModelResponse) Descriptor() ([]byte, []int) {
-	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{20}
+	return file_platform_authz_v1_authz_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetAuthorizationModelResponse) GetId() string {
@@ -1259,23 +1226,25 @@ const file_platform_authz_v1_authz_proto_rawDesc = "" +
 	"\x06object\x18\x01 \x01(\tR\x06object\x12\x1a\n" +
 	"\brelation\x18\x02 \x01(\tR\brelation\x12\x18\n" +
 	"\asubject\x18\x03 \x01(\tR\asubject\x12\x1b\n" +
-	"\ttenant_id\x18\x04 \x01(\tR\btenantId\"\xd4\x01\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\"\xe6\x01\n" +
 	"\fCheckRequest\x12\x16\n" +
 	"\x06object\x18\x01 \x01(\tR\x06object\x12\x1a\n" +
 	"\brelation\x18\x02 \x01(\tR\brelation\x12\x18\n" +
 	"\asubject\x18\x03 \x01(\tR\asubject\x124\n" +
 	"\x16authorization_model_id\x18\x04 \x01(\tR\x14authorizationModelId\x12@\n" +
-	"\vconsistency\x18\x05 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\")\n" +
+	"\vconsistency\x18\x05 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\x12\x10\n" +
+	"\x03app\x18\x06 \x01(\tR\x03app\")\n" +
 	"\rCheckResponse\x12\x18\n" +
 	"\aallowed\x18\x01 \x01(\bR\aallowed\"^\n" +
 	"\x0eBatchCheckItem\x12\x16\n" +
 	"\x06object\x18\x01 \x01(\tR\x06object\x12\x1a\n" +
 	"\brelation\x18\x02 \x01(\tR\brelation\x12\x18\n" +
-	"\asubject\x18\x03 \x01(\tR\asubject\"\xc6\x01\n" +
+	"\asubject\x18\x03 \x01(\tR\asubject\"\xd8\x01\n" +
 	"\x11BatchCheckRequest\x129\n" +
 	"\x06checks\x18\x01 \x03(\v2!.platform.authz.v1.BatchCheckItemR\x06checks\x124\n" +
 	"\x16authorization_model_id\x18\x02 \x01(\tR\x14authorizationModelId\x12@\n" +
-	"\vconsistency\x18\x03 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\":\n" +
+	"\vconsistency\x18\x03 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\x12\x10\n" +
+	"\x03app\x18\x04 \x01(\tR\x03app\":\n" +
 	"\n" +
 	"CheckError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
@@ -1284,26 +1253,29 @@ const file_platform_authz_v1_authz_proto_rawDesc = "" +
 	"\aallowed\x18\x01 \x01(\bR\aallowed\x123\n" +
 	"\x05error\x18\x02 \x01(\v2\x1d.platform.authz.v1.CheckErrorR\x05error\"S\n" +
 	"\x12BatchCheckResponse\x12=\n" +
-	"\aresults\x18\x01 \x03(\v2#.platform.authz.v1.BatchCheckResultR\aresults\"\xec\x01\n" +
+	"\aresults\x18\x01 \x03(\v2#.platform.authz.v1.BatchCheckResultR\aresults\"\xfe\x01\n" +
 	"\x12ListObjectsRequest\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1a\n" +
 	"\brelation\x18\x02 \x01(\tR\brelation\x12\x18\n" +
 	"\asubject\x18\x03 \x01(\tR\asubject\x12\x14\n" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x124\n" +
 	"\x16authorization_model_id\x18\x05 \x01(\tR\x14authorizationModelId\x12@\n" +
-	"\vconsistency\x18\x06 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\"/\n" +
+	"\vconsistency\x18\x06 \x01(\x0e2\x1e.platform.authz.v1.ConsistencyR\vconsistency\x12\x10\n" +
+	"\x03app\x18\a \x01(\tR\x03app\"/\n" +
 	"\x13ListObjectsResponse\x12\x18\n" +
-	"\aobjects\x18\x01 \x03(\tR\aobjects\"\xa1\x01\n" +
+	"\aobjects\x18\x01 \x03(\tR\aobjects\"\xb3\x01\n" +
 	"\x12WriteTuplesRequest\x120\n" +
 	"\x06writes\x18\x01 \x03(\v2\x18.platform.authz.v1.TupleR\x06writes\x122\n" +
 	"\adeletes\x18\x02 \x03(\v2\x18.platform.authz.v1.TupleR\adeletes\x12%\n" +
-	"\x0edelete_objects\x18\x03 \x03(\tR\rdeleteObjects\"\x15\n" +
-	"\x13WriteTuplesResponse\"h\n" +
+	"\x0edelete_objects\x18\x03 \x03(\tR\rdeleteObjects\x12\x10\n" +
+	"\x03app\x18\x04 \x01(\tR\x03app\"\x15\n" +
+	"\x13WriteTuplesResponse\"z\n" +
 	"\x12ReadChangesRequest\x12\x1f\n" +
 	"\vobject_type\x18\x01 \x01(\tR\n" +
 	"objectType\x12\x1b\n" +
 	"\tafter_seq\x18\x02 \x01(\x03R\bafterSeq\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xc0\x01\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x10\n" +
+	"\x03app\x18\x04 \x01(\tR\x03app\"\xc0\x01\n" +
 	"\vTupleChange\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x1c\n" +
 	"\toperation\x18\x02 \x01(\tR\toperation\x12.\n" +
@@ -1313,17 +1285,14 @@ const file_platform_authz_v1_authz_proto_rawDesc = "" +
 	"changeTime\"j\n" +
 	"\x13ReadChangesResponse\x128\n" +
 	"\achanges\x18\x01 \x03(\v2\x1e.platform.authz.v1.TupleChangeR\achanges\x12\x19\n" +
-	"\blast_seq\x18\x02 \x01(\x03R\alastSeq\"N\n" +
-	"\x1eWriteAuthorizationModelRequest\x12\x10\n" +
-	"\x03dsl\x18\x01 \x01(\tR\x03dsl\x12\x1a\n" +
-	"\bactivate\x18\x02 \x01(\bR\bactivate\"1\n" +
-	"\x1fWriteAuthorizationModelResponse\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"3\n" +
+	"\blast_seq\x18\x02 \x01(\x03R\alastSeq\"E\n" +
 	"!ActivateAuthorizationModelRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"$\n" +
-	"\"ActivateAuthorizationModelResponse\".\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
+	"\x03app\x18\x02 \x01(\tR\x03app\"$\n" +
+	"\"ActivateAuthorizationModelResponse\"@\n" +
 	"\x1cGetAuthorizationModelRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\x96\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
+	"\x03app\x18\x02 \x01(\tR\x03app\"\x96\x01\n" +
 	"\x1dGetAuthorizationModelResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03dsl\x18\x02 \x01(\tR\x03dsl\x12\x16\n" +
@@ -1333,15 +1302,14 @@ const file_platform_authz_v1_authz_proto_rawDesc = "" +
 	"\vConsistency\x12\x1b\n" +
 	"\x17CONSISTENCY_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cCONSISTENCY_MINIMIZE_LATENCY\x10\x01\x12\x16\n" +
-	"\x12CONSISTENCY_HIGHER\x10\x022\xda\x06\n" +
+	"\x12CONSISTENCY_HIGHER\x10\x022\xd7\x05\n" +
 	"\fAuthzService\x12J\n" +
 	"\x05Check\x12\x1f.platform.authz.v1.CheckRequest\x1a .platform.authz.v1.CheckResponse\x12Y\n" +
 	"\n" +
 	"BatchCheck\x12$.platform.authz.v1.BatchCheckRequest\x1a%.platform.authz.v1.BatchCheckResponse\x12\\\n" +
 	"\vListObjects\x12%.platform.authz.v1.ListObjectsRequest\x1a&.platform.authz.v1.ListObjectsResponse\x12\\\n" +
 	"\vWriteTuples\x12%.platform.authz.v1.WriteTuplesRequest\x1a&.platform.authz.v1.WriteTuplesResponse\x12\\\n" +
-	"\vReadChanges\x12%.platform.authz.v1.ReadChangesRequest\x1a&.platform.authz.v1.ReadChangesResponse\x12\x80\x01\n" +
-	"\x17WriteAuthorizationModel\x121.platform.authz.v1.WriteAuthorizationModelRequest\x1a2.platform.authz.v1.WriteAuthorizationModelResponse\x12\x89\x01\n" +
+	"\vReadChanges\x12%.platform.authz.v1.ReadChangesRequest\x1a&.platform.authz.v1.ReadChangesResponse\x12\x89\x01\n" +
 	"\x1aActivateAuthorizationModel\x124.platform.authz.v1.ActivateAuthorizationModelRequest\x1a5.platform.authz.v1.ActivateAuthorizationModelResponse\x12z\n" +
 	"\x15GetAuthorizationModel\x12/.platform.authz.v1.GetAuthorizationModelRequest\x1a0.platform.authz.v1.GetAuthorizationModelResponseB\xaf\x01\n" +
 	"\x15com.platform.authz.v1B\n" +
@@ -1360,7 +1328,7 @@ func file_platform_authz_v1_authz_proto_rawDescGZIP() []byte {
 }
 
 var file_platform_authz_v1_authz_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_platform_authz_v1_authz_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_platform_authz_v1_authz_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_platform_authz_v1_authz_proto_goTypes = []any{
 	(Consistency)(0),                           // 0: platform.authz.v1.Consistency
 	(*Tuple)(nil),                              // 1: platform.authz.v1.Tuple
@@ -1378,13 +1346,11 @@ var file_platform_authz_v1_authz_proto_goTypes = []any{
 	(*ReadChangesRequest)(nil),                 // 13: platform.authz.v1.ReadChangesRequest
 	(*TupleChange)(nil),                        // 14: platform.authz.v1.TupleChange
 	(*ReadChangesResponse)(nil),                // 15: platform.authz.v1.ReadChangesResponse
-	(*WriteAuthorizationModelRequest)(nil),     // 16: platform.authz.v1.WriteAuthorizationModelRequest
-	(*WriteAuthorizationModelResponse)(nil),    // 17: platform.authz.v1.WriteAuthorizationModelResponse
-	(*ActivateAuthorizationModelRequest)(nil),  // 18: platform.authz.v1.ActivateAuthorizationModelRequest
-	(*ActivateAuthorizationModelResponse)(nil), // 19: platform.authz.v1.ActivateAuthorizationModelResponse
-	(*GetAuthorizationModelRequest)(nil),       // 20: platform.authz.v1.GetAuthorizationModelRequest
-	(*GetAuthorizationModelResponse)(nil),      // 21: platform.authz.v1.GetAuthorizationModelResponse
-	(*timestamppb.Timestamp)(nil),              // 22: google.protobuf.Timestamp
+	(*ActivateAuthorizationModelRequest)(nil),  // 16: platform.authz.v1.ActivateAuthorizationModelRequest
+	(*ActivateAuthorizationModelResponse)(nil), // 17: platform.authz.v1.ActivateAuthorizationModelResponse
+	(*GetAuthorizationModelRequest)(nil),       // 18: platform.authz.v1.GetAuthorizationModelRequest
+	(*GetAuthorizationModelResponse)(nil),      // 19: platform.authz.v1.GetAuthorizationModelResponse
+	(*timestamppb.Timestamp)(nil),              // 20: google.protobuf.Timestamp
 }
 var file_platform_authz_v1_authz_proto_depIdxs = []int32{
 	0,  // 0: platform.authz.v1.CheckRequest.consistency:type_name -> platform.authz.v1.Consistency
@@ -1396,27 +1362,25 @@ var file_platform_authz_v1_authz_proto_depIdxs = []int32{
 	1,  // 6: platform.authz.v1.WriteTuplesRequest.writes:type_name -> platform.authz.v1.Tuple
 	1,  // 7: platform.authz.v1.WriteTuplesRequest.deletes:type_name -> platform.authz.v1.Tuple
 	1,  // 8: platform.authz.v1.TupleChange.tuple:type_name -> platform.authz.v1.Tuple
-	22, // 9: platform.authz.v1.TupleChange.change_time:type_name -> google.protobuf.Timestamp
+	20, // 9: platform.authz.v1.TupleChange.change_time:type_name -> google.protobuf.Timestamp
 	14, // 10: platform.authz.v1.ReadChangesResponse.changes:type_name -> platform.authz.v1.TupleChange
-	22, // 11: platform.authz.v1.GetAuthorizationModelResponse.create_time:type_name -> google.protobuf.Timestamp
+	20, // 11: platform.authz.v1.GetAuthorizationModelResponse.create_time:type_name -> google.protobuf.Timestamp
 	2,  // 12: platform.authz.v1.AuthzService.Check:input_type -> platform.authz.v1.CheckRequest
 	5,  // 13: platform.authz.v1.AuthzService.BatchCheck:input_type -> platform.authz.v1.BatchCheckRequest
 	9,  // 14: platform.authz.v1.AuthzService.ListObjects:input_type -> platform.authz.v1.ListObjectsRequest
 	11, // 15: platform.authz.v1.AuthzService.WriteTuples:input_type -> platform.authz.v1.WriteTuplesRequest
 	13, // 16: platform.authz.v1.AuthzService.ReadChanges:input_type -> platform.authz.v1.ReadChangesRequest
-	16, // 17: platform.authz.v1.AuthzService.WriteAuthorizationModel:input_type -> platform.authz.v1.WriteAuthorizationModelRequest
-	18, // 18: platform.authz.v1.AuthzService.ActivateAuthorizationModel:input_type -> platform.authz.v1.ActivateAuthorizationModelRequest
-	20, // 19: platform.authz.v1.AuthzService.GetAuthorizationModel:input_type -> platform.authz.v1.GetAuthorizationModelRequest
-	3,  // 20: platform.authz.v1.AuthzService.Check:output_type -> platform.authz.v1.CheckResponse
-	8,  // 21: platform.authz.v1.AuthzService.BatchCheck:output_type -> platform.authz.v1.BatchCheckResponse
-	10, // 22: platform.authz.v1.AuthzService.ListObjects:output_type -> platform.authz.v1.ListObjectsResponse
-	12, // 23: platform.authz.v1.AuthzService.WriteTuples:output_type -> platform.authz.v1.WriteTuplesResponse
-	15, // 24: platform.authz.v1.AuthzService.ReadChanges:output_type -> platform.authz.v1.ReadChangesResponse
-	17, // 25: platform.authz.v1.AuthzService.WriteAuthorizationModel:output_type -> platform.authz.v1.WriteAuthorizationModelResponse
-	19, // 26: platform.authz.v1.AuthzService.ActivateAuthorizationModel:output_type -> platform.authz.v1.ActivateAuthorizationModelResponse
-	21, // 27: platform.authz.v1.AuthzService.GetAuthorizationModel:output_type -> platform.authz.v1.GetAuthorizationModelResponse
-	20, // [20:28] is the sub-list for method output_type
-	12, // [12:20] is the sub-list for method input_type
+	16, // 17: platform.authz.v1.AuthzService.ActivateAuthorizationModel:input_type -> platform.authz.v1.ActivateAuthorizationModelRequest
+	18, // 18: platform.authz.v1.AuthzService.GetAuthorizationModel:input_type -> platform.authz.v1.GetAuthorizationModelRequest
+	3,  // 19: platform.authz.v1.AuthzService.Check:output_type -> platform.authz.v1.CheckResponse
+	8,  // 20: platform.authz.v1.AuthzService.BatchCheck:output_type -> platform.authz.v1.BatchCheckResponse
+	10, // 21: platform.authz.v1.AuthzService.ListObjects:output_type -> platform.authz.v1.ListObjectsResponse
+	12, // 22: platform.authz.v1.AuthzService.WriteTuples:output_type -> platform.authz.v1.WriteTuplesResponse
+	15, // 23: platform.authz.v1.AuthzService.ReadChanges:output_type -> platform.authz.v1.ReadChangesResponse
+	17, // 24: platform.authz.v1.AuthzService.ActivateAuthorizationModel:output_type -> platform.authz.v1.ActivateAuthorizationModelResponse
+	19, // 25: platform.authz.v1.AuthzService.GetAuthorizationModel:output_type -> platform.authz.v1.GetAuthorizationModelResponse
+	19, // [19:26] is the sub-list for method output_type
+	12, // [12:19] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name
 	12, // [12:12] is the sub-list for extension extendee
 	0,  // [0:12] is the sub-list for field type_name
@@ -1433,7 +1397,7 @@ func file_platform_authz_v1_authz_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_platform_authz_v1_authz_proto_rawDesc), len(file_platform_authz_v1_authz_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

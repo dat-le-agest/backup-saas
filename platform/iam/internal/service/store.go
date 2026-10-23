@@ -9,14 +9,18 @@ import (
 
 // Store is implemented by internal/repository. Getters return apperr.ErrNotFound.
 // Calls made with the ctx of a unit of work (core/uow) share its transaction.
+//
+// Tenants, memberships and refresh tokens are per app: those calls use the app
+// of ctx (AppOf: InApp, else the caller's token).
 type Store interface {
 	EnsureApps(ctx context.Context, ids []string) error
+	ListApps(ctx context.Context) ([]string, error)
 	GetApp(ctx context.Context, id string) (*model.App, error)
 
 	CreateTenant(ctx context.Context, t *model.Tenant) error
 	GetTenant(ctx context.Context, id string) (*model.Tenant, error)
 	LockTenant(ctx context.Context, tenantID string) error
-	ListTenantsForUser(ctx context.Context, appID, userID string) ([]model.MyTenant, error)
+	ListTenantsForUser(ctx context.Context, userID string) ([]model.MyTenant, error)
 
 	GetMembership(ctx context.Context, tenantID, userID string) (*model.Membership, error)
 	GetMembershipAny(ctx context.Context, tenantID, userID string) (*model.Membership, error)
@@ -51,10 +55,10 @@ type PasswordHasher interface {
 	VerifyDummy(ctx context.Context, password string)
 }
 
-// VersionCache publishes membership versions for the gateway (Redis).
-// Failures are logged, not returned: the gateway falls back to asking iam.
+// VersionCache publishes membership versions for the gateways (Redis).
+// Failures are logged, not returned: gateways fall back to asking iam.
 type VersionCache interface {
-	SetMembershipVersion(ctx context.Context, tenantID, userID string, version int64) error
+	SetMembershipVersion(ctx context.Context, appID, tenantID, userID string, version int64) error
 }
 
 // AccessTokenSigner is satisfied by *sdk/token.Signer.

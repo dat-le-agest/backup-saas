@@ -50,7 +50,7 @@ type Iam struct {
 	VersionCalls atomic.Int32
 
 	mu       sync.Mutex
-	versions map[string]int64 // tenant/user → version
+	versions map[string]int64 // app/tenant/user → version
 }
 
 func NewIam() *Iam {
@@ -61,18 +61,19 @@ func NewIam() *Iam {
 	return &Iam{Signer: token.NewSigner(key, Issuer, 10*time.Minute), versions: map[string]int64{}}
 }
 
-// SetVersion sets the current version of a membership (as iam does on a change).
+// SetVersion sets the current version of a membership of a tenant of App (as
+// iam does on a change).
 func (f *Iam) SetVersion(tenantID, userID string, v int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.versions[tenantID+"/"+userID] = v
+	f.versions[App+"/"+tenantID+"/"+userID] = v
 }
 
 // RemoveMembership forgets a membership: GetMembershipVersion answers NOT_FOUND.
 func (f *Iam) RemoveMembership(tenantID, userID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.versions, tenantID+"/"+userID)
+	delete(f.versions, App+"/"+tenantID+"/"+userID)
 }
 
 // Token signs an access token of App without registering the membership.
@@ -100,7 +101,7 @@ func (f *Iam) GetMembershipVersion(_ context.Context, req *iamv1.GetMembershipVe
 	f.VersionCalls.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	v, ok := f.versions[req.GetTenantId()+"/"+req.GetUserId()]
+	v, ok := f.versions[req.GetAppId()+"/"+req.GetTenantId()+"/"+req.GetUserId()]
 	if !ok {
 		return nil, apperr.ErrNotFound
 	}

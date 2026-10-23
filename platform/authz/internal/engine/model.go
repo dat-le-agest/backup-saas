@@ -2,6 +2,8 @@ package engine
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"core/apperr"
 
@@ -28,12 +30,46 @@ func ParseDSL(dsl string) (*openfgav1.AuthorizationModel, error) {
 	return m, nil
 }
 
+// ModuleFile is one OpenFGA module file (`module <name>` + types, `extend type`).
+type ModuleFile struct {
+	Name     string
+	Contents string
+}
+
+// ParseModules compiles module files into one model (schema 1.2), e.g. the
+// platform module (user, tenant) and an app's module, which may add relations
+// to platform types with `extend type tenant`. It also returns the source: the
+// files in name order, each preceded by its name, the same for the same files
+// (to tell whether a model changed).
+func ParseModules(files []ModuleFile) (*openfgav1.AuthorizationModel, string, error) {
+	if len(files) == 0 {
+		return nil, "", apperr.Invalid("modules", "no module files")
+	}
+	sorted := append([]ModuleFile(nil), files...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+
+	in := make([]transformer.ModuleFile, len(sorted))
+	var source strings.Builder
+	for i, f := range sorted {
+		in[i] = transformer.ModuleFile{Name: f.Name, Contents: f.Contents}
+		fmt.Fprintf(&source, "# file: %s\n%s\n", f.Name, strings.TrimRight(f.Contents, "\n"))
+	}
+	m, err := transformer.TransformModuleFilesToModel(in, "1.2")
+	if err != nil {
+		return nil, "", apperr.Invalid("modules", err.Error())
+	}
+	if _, err := NewModel("", m); err != nil {
+		return nil, "", err
+	}
+	return m, source.String(), nil
+}
+
 // NewModel validates m: every referenced type and relation exists, tuplesets of
 // "x from y" are directly assignable relations, and no unsupported feature
-// (conditions) is used.
+// (conditions) is used. Schema 1.2 is 1.1 composed from modules.
 func NewModel(id string, m *openfgav1.AuthorizationModel) (*Model, error) {
-	if m.GetSchemaVersion() != "1.1" {
-		return nil, invalidModel("schema version must be 1.1, got %q", m.GetSchemaVersion())
+	if v := m.GetSchemaVersion(); v != "1.1" && v != "1.2" {
+		return nil, invalidModel("schema version must be 1.1 or 1.2, got %q", v)
 	}
 	if len(m.GetConditions()) > 0 {
 		return nil, invalidModel("conditions are not supported")

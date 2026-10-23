@@ -17,6 +17,7 @@ import (
 	"core/components/redisc"
 	"core/components/rpcc"
 	"core/di"
+	"core/migrate"
 	"core/outbox"
 	"core/sctx"
 	"iam/config"
@@ -38,9 +39,9 @@ func main() {
 
 // run returns errors instead of exiting so deferred sc.Stop() always executes.
 func run() error {
-	// defined before the service context parses flags (and their env, IAM_APPS)
-	apps := flag.String("iam-apps", "",
-		"comma-separated ids of the apps served by the platform (token audiences), e.g. notes,crm. Required")
+	// defined before the service context parses flags (and their env, PLATFORM_APPS)
+	apps := flag.String("platform-apps", "",
+		"comma-separated ids of the apps served by the platform (token audiences, schema names), e.g. notes,crm. Required")
 
 	sc := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
@@ -67,7 +68,20 @@ func run() error {
 		}
 	}()
 
+	appIDs := strings.FieldsFunc(*apps, func(r rune) bool { return r == ',' || r == ' ' })
+	if err := service.ValidateApps(appIDs); err != nil {
+		return err
+	}
+
+	// shared tables were migrated by gormc; each app's tables live in its schema
 	dbc := sctx.MustGetAs[gormc.GormComponent](sc, config.ComponentDB)
+	if dbc.MigrateMode() != gormc.MigrateOff {
+		for _, app := range appIDs {
+			if err := migrate.UpInSchema(context.Background(), dbc.DSN(), migrations.AppFS, app, sc.Logger(config.ComponentDB)); err != nil {
+				return err
+			}
+		}
+	}
 	if dbc.MigrateOnly() {
 		logger.Info("migrations applied (--db-migrate=only), exiting")
 		return nil
@@ -100,7 +114,6 @@ func run() error {
 		return err
 	}
 
-	appIDs := strings.FieldsFunc(*apps, func(r rune) bool { return r == ',' || r == ' ' })
 	if err := service.RegisterApps(context.Background(), di.MustGet[service.Store](c), appIDs); err != nil {
 		return err
 	}

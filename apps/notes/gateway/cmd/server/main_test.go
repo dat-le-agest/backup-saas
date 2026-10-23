@@ -288,7 +288,7 @@ func TestStaleTokensRejected(t *testing.T) {
 			// iam demotes u1: bumps the version and publishes it (write-through)
 			s.iam.SetVersion("t1", "u1", 2)
 			if s.redis != nil {
-				s.redis.Set(token.MembershipVersionKey("t1", "u1"), "2")
+				s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u1"), "2")
 			}
 			res := s.do("GET", "/v1/notes", "", tok)
 			if res.Status != 401 || !strings.Contains(res.ErrMsg(), "refresh") {
@@ -303,7 +303,7 @@ func TestStaleTokensRejected(t *testing.T) {
 			// removal
 			s.iam.RemoveMembership("t1", "u1")
 			if s.redis != nil {
-				s.redis.Set(token.MembershipVersionKey("t1", "u1"), strconv.FormatInt(token.RemovedMembershipVersion, 10))
+				s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u1"), strconv.FormatInt(token.RemovedMembershipVersion, 10))
 			}
 			if res := s.do("GET", "/v1/notes", "", s.iam.Token("u1", "t1", "viewer", 2)); res.Status != 401 {
 				t.Fatalf("removed member: %d %v", res.Status, res.Body)
@@ -324,12 +324,12 @@ func TestVersionCacheAndFallbacks(t *testing.T) {
 	if n := s.iam.VersionCalls.Load(); n != 1 {
 		t.Fatalf("iam asked %d times, want 1 (then served from Redis)", n)
 	}
-	if v, _ := s.redis.Get(token.MembershipVersionKey("t1", "u1")); v != "1" {
+	if v, _ := s.redis.Get(token.MembershipVersionKey(gatewaytest.App, "t1", "u1")); v != "1" {
 		t.Fatalf("cached %q", v)
 	}
 
 	// the version published in Redis is authoritative: iam's stale answer is never consulted
-	s.redis.Set(token.MembershipVersionKey("t1", "u2"), "5")
+	s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u2"), "5")
 	if res := s.do("GET", "/v1/notes", "", s.iam.Member("u2", "t1", "member", 4)); res.Status != 401 {
 		t.Fatalf("redis must win over a stale token: %d", res.Status)
 	}

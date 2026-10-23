@@ -13,7 +13,7 @@ import (
 
 // buildContainer wires repositories, services and handlers.
 // Infrastructure (db, logger...) comes from sctx and is bridged in via di.Instance.
-func buildContainer(db *gorm.DB, log logger.Logger) (*di.Container, error) {
+func buildContainer(db *gorm.DB, log logger.Logger, apps service.Apps) (*di.Container, error) {
 	c := di.New()
 
 	steps := []func() error{
@@ -27,6 +27,7 @@ func buildContainer(db *gorm.DB, log logger.Logger) (*di.Container, error) {
 			return di.Provide[uow.UnitOfWork](c, func(u *uow.Gorm) uow.UnitOfWork { return u }, di.Singleton)
 		},
 		func() error { return di.Instance[logger.Logger](c, log) },
+		func() error { return di.Instance[service.Apps](c, apps) },
 
 		// authz
 		func() error { return di.Provide[*repository.Store](c, repository.NewStore, di.Singleton) },

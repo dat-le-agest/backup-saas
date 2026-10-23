@@ -35,7 +35,7 @@ func (h *AuthzHandler) Mount(r gin.IRouter) {
 }
 
 func (h *AuthzHandler) Check(ctx context.Context, req *authzv1.CheckRequest) (*authzv1.CheckResponse, error) {
-	ok, err := h.svc.Check(ctx, req.GetObject(), req.GetRelation(), req.GetSubject(), req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
+	ok, err := h.svc.Check(ctx, req.GetApp(), req.GetObject(), req.GetRelation(), req.GetSubject(), req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (h *AuthzHandler) BatchCheck(ctx context.Context, req *authzv1.BatchCheckRe
 	for i, c := range req.GetChecks() {
 		checks[i] = service.CheckInput{Object: c.GetObject(), Relation: c.GetRelation(), Subject: c.GetSubject()}
 	}
-	results, err := h.svc.BatchCheck(ctx, checks, req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
+	results, err := h.svc.BatchCheck(ctx, req.GetApp(), checks, req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (h *AuthzHandler) checkError(ctx context.Context, i int, err error) *authzv
 }
 
 func (h *AuthzHandler) ListObjects(ctx context.Context, req *authzv1.ListObjectsRequest) (*authzv1.ListObjectsResponse, error) {
-	objects, err := h.svc.ListObjects(ctx, req.GetType(), req.GetRelation(), req.GetSubject(), int(req.GetLimit()), req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
+	objects, err := h.svc.ListObjects(ctx, req.GetApp(), req.GetType(), req.GetRelation(), req.GetSubject(), int(req.GetLimit()), req.GetAuthorizationModelId(), consistency(req.GetConsistency()))
 	if err != nil {
 		return nil, err
 	}
@@ -80,14 +80,14 @@ func (h *AuthzHandler) ListObjects(ctx context.Context, req *authzv1.ListObjects
 }
 
 func (h *AuthzHandler) WriteTuples(ctx context.Context, req *authzv1.WriteTuplesRequest) (*authzv1.WriteTuplesResponse, error) {
-	if err := h.svc.WriteTuples(ctx, toInputs(req.GetWrites()), toInputs(req.GetDeletes()), req.GetDeleteObjects()); err != nil {
+	if err := h.svc.WriteTuples(ctx, req.GetApp(), toInputs(req.GetWrites()), toInputs(req.GetDeletes()), req.GetDeleteObjects()); err != nil {
 		return nil, err
 	}
 	return &authzv1.WriteTuplesResponse{}, nil
 }
 
 func (h *AuthzHandler) ReadChanges(ctx context.Context, req *authzv1.ReadChangesRequest) (*authzv1.ReadChangesResponse, error) {
-	changes, last, err := h.svc.ReadChanges(ctx, req.GetObjectType(), req.GetAfterSeq(), int(req.GetLimit()))
+	changes, last, err := h.svc.ReadChanges(ctx, req.GetApp(), req.GetObjectType(), req.GetAfterSeq(), int(req.GetLimit()))
 	if err != nil {
 		return nil, err
 	}
@@ -107,23 +107,15 @@ func (h *AuthzHandler) ReadChanges(ctx context.Context, req *authzv1.ReadChanges
 	return res, nil
 }
 
-func (h *AuthzHandler) WriteAuthorizationModel(ctx context.Context, req *authzv1.WriteAuthorizationModelRequest) (*authzv1.WriteAuthorizationModelResponse, error) {
-	id, err := h.svc.WriteModel(ctx, req.GetDsl(), req.GetActivate())
-	if err != nil {
-		return nil, err
-	}
-	return &authzv1.WriteAuthorizationModelResponse{Id: id}, nil
-}
-
 func (h *AuthzHandler) ActivateAuthorizationModel(ctx context.Context, req *authzv1.ActivateAuthorizationModelRequest) (*authzv1.ActivateAuthorizationModelResponse, error) {
-	if err := h.svc.ActivateModel(ctx, req.GetId()); err != nil {
+	if err := h.svc.ActivateModel(ctx, req.GetApp(), req.GetId()); err != nil {
 		return nil, err
 	}
 	return &authzv1.ActivateAuthorizationModelResponse{}, nil
 }
 
 func (h *AuthzHandler) GetAuthorizationModel(ctx context.Context, req *authzv1.GetAuthorizationModelRequest) (*authzv1.GetAuthorizationModelResponse, error) {
-	m, err := h.svc.GetModel(ctx, req.GetId())
+	m, err := h.svc.GetModel(ctx, req.GetApp(), req.GetId())
 	if err != nil {
 		return nil, err
 	}

@@ -11,7 +11,7 @@ INSERT INTO authz_revision (value) VALUES (0);
 
 -- +goose StatementBegin
 CREATE FUNCTION relation_tuples_bump_revision() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 BEGIN
     UPDATE authz_revision SET value = value + 1;
     RETURN NULL;

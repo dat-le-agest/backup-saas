@@ -7,6 +7,12 @@ import "google/protobuf/timestamp.proto";
 // AuthzService is the centralized relationship-based authorization (ReBAC) of
 // the platform, in the style of Zanzibar / OpenFGA. Internal only.
 //
+// Every app has its own store (a Postgres schema): its authorization model
+// (the platform module + the app's module) and its tuples. Every request names
+// the app; nothing is shared between apps. Models are loaded from files when
+// the service starts (platform/authz/model, apps/<app>/authz) and activated
+// when they change.
+//
 // Notation
 //   object   "type:id"            e.g. "note:42", "tenant:tnt_a"
 //   subject  "type:id"            e.g. "user:usr_1"
@@ -40,10 +46,8 @@ service AuthzService {
   // slightly out of order: re-read a small window before last_seq.
   rpc ReadChanges(ReadChangesRequest) returns (ReadChangesResponse);
 
-  // Stores a new model version from DSL; optionally activates it.
-  rpc WriteAuthorizationModel(WriteAuthorizationModelRequest) returns (WriteAuthorizationModelResponse);
-
-  // Makes a stored model version the active one.
+  // Makes a stored model version of the app the active one (e.g. a rollback;
+  // the next start activates the files again if they differ).
   rpc ActivateAuthorizationModel(ActivateAuthorizationModelRequest) returns (ActivateAuthorizationModelResponse);
 
   // A model version, or the active one when id is empty.
@@ -77,6 +81,8 @@ message CheckRequest {
   // Empty: the active model.
   string authorization_model_id = 4;
   Consistency consistency = 5;
+  // App whose store is used, e.g. "notes".
+  string app = 6;
 }
 
 message CheckResponse {
@@ -94,6 +100,8 @@ message BatchCheckRequest {
   // Empty: the active model.
   string authorization_model_id = 2;
   Consistency consistency = 3;
+  // App whose store is used, e.g. "notes".
+  string app = 4;
 }
 
 message CheckError {
@@ -122,6 +130,8 @@ message ListObjectsRequest {
   int32 limit = 4;
   string authorization_model_id = 5;
   Consistency consistency = 6;
+  // App whose store is used, e.g. "notes".
+  string app = 7;
 }
 
 message ListObjectsResponse {
@@ -137,6 +147,8 @@ message WriteTuplesRequest {
   // (doc:1#editor@team:eng#member when team:eng is deleted) is removed.
   // Applied before deletes and writes.
   repeated string delete_objects = 3;
+  // App whose store is used, e.g. "notes".
+  string app = 4;
 }
 
 message WriteTuplesResponse {}
@@ -147,6 +159,8 @@ message ReadChangesRequest {
   int64 after_seq = 2;
   // Default 100, max 1000.
   int32 limit = 3;
+  // App whose store is used, e.g. "notes".
+  string app = 4;
 }
 
 message TupleChange {
@@ -164,23 +178,18 @@ message ReadChangesResponse {
   int64 last_seq = 2;
 }
 
-message WriteAuthorizationModelRequest {
-  string dsl = 1;
-  bool activate = 2;
-}
-
-message WriteAuthorizationModelResponse {
-  string id = 1;
-}
-
 message ActivateAuthorizationModelRequest {
   string id = 1;
+  // App whose store is used, e.g. "notes".
+  string app = 2;
 }
 
 message ActivateAuthorizationModelResponse {}
 
 message GetAuthorizationModelRequest {
   string id = 1;
+  // App whose store is used, e.g. "notes".
+  string app = 2;
 }
 
 message GetAuthorizationModelResponse {

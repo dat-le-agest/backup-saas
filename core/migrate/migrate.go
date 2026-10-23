@@ -1,5 +1,5 @@
 // Package migrate applies a service's versioned SQL migrations (goose format)
-// to Postgres.
+// to Postgres, to the default schema (Up) or to a named one (UpInSchema).
 //
 // Each service embeds its migrations:
 //
@@ -16,9 +16,13 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"regexp"
+	"strings"
 
 	"core/logger"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 )
@@ -68,4 +72,45 @@ func provider(db *sql.DB, fsys fs.FS) (*goose.Provider, error) {
 		return nil, fmt.Errorf("migrations: %w", err)
 	}
 	return p, nil
+}
+
+// schemaName: lowercase letters, digits, underscores and hyphens (app ids)
+var schemaName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
+// QuoteSchema returns schema as a quoted SQL identifier ("notes", "my-app"),
+// or an error if it isn't a valid schema name. Use it to qualify table names.
+func QuoteSchema(schema string) (string, error) {
+	if !schemaName.MatchString(schema) {
+		return "", fmt.Errorf("invalid schema name %q", schema)
+	}
+	return `"` + strings.ReplaceAll(schema, `"`, `""`) + `"`, nil
+}
+
+// UpInSchema creates schema if needed and applies fsys inside it: migrations
+// run with search_path=schema, so they create unqualified tables there, and the
+// schema keeps its own version table. Functions referenced by triggers should
+// be declared with SET search_path FROM CURRENT so they keep using this schema.
+//
+// dsn is the database's DSN (gormc.GormComponent.DSN); the role must be allowed
+// to create schemas (it owns the database).
+func UpInSchema(ctx context.Context, dsn string, fsys fs.FS, schema string, l logger.Logger) error {
+	quoted, err := QuoteSchema(schema)
+	if err != nil {
+		return err
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("migrate %s: parse dsn: %w", schema, err)
+	}
+	cfg.RuntimeParams["search_path"] = quoted
+	db := stdlib.OpenDB(*cfg)
+	defer db.Close()
+
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoted); err != nil {
+		return fmt.Errorf("migrate %s: create schema: %w", schema, err)
+	}
+	if err := Up(ctx, db, fsys, l.With("schema", schema)); err != nil {
+		return fmt.Errorf("schema %s: %w", schema, err)
+	}
+	return nil
 }

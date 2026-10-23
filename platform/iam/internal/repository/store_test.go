@@ -2,13 +2,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"core/apperr"
 	"core/testdb"
 	"core/uow"
 	"iam/internal/model"
+	"iam/internal/service"
 	"iam/migrations"
 )
 
@@ -74,5 +77,48 @@ func TestRecordLoginFailureLocksAndResets(t *testing.T) {
 	got, _ = s.GetLoginThrottle(ctx, "a@example.com")
 	if got.Failures != 1 {
 		t.Fatalf("old failures kept: %+v", got)
+	}
+}
+
+// Tables of an app live in its schema: the same store call reaches the app of ctx only.
+func TestAppTablesAreInTheAppSchema(t *testing.T) {
+	dsn := testdb.NewDSN(t)
+	db := testdb.Open(t, dsn, migrations.FS)
+	for _, app := range []string{"notes", "my-app"} {
+		testdb.UpInSchema(t, dsn, migrations.AppFS, app)
+	}
+	s := NewStore(uow.New(db))
+	notes := service.InApp(context.Background(), "notes")
+	mine := service.InApp(context.Background(), "my-app")
+
+	if err := s.EnsureUser(notes, "u1"); err != nil { // users are shared
+		t.Fatal(err)
+	}
+	if err := s.CreateTenant(notes, &model.Tenant{ID: "t1", Name: "Acme"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveMembership(notes, &model.Membership{TenantID: "t1", UserID: "u1", Role: "owner", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := s.GetTenant(notes, "t1"); err != nil || got.AppID != "notes" {
+		t.Fatalf("notes tenant: %+v %v", got, err)
+	}
+	if _, err := s.GetTenant(mine, "t1"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("tenant visible from another app: %v", err)
+	}
+	if list, err := s.ListTenantsForUser(mine, "u1"); err != nil || len(list) != 0 {
+		t.Fatalf("my-app tenants: %v %v", list, err)
+	}
+	if list, err := s.ListTenantsForUser(notes, "u1"); err != nil || len(list) != 1 || list[0].Tenant.AppID != "notes" {
+		t.Fatalf("notes tenants: %v %v", list, err)
+	}
+
+	// no app in ctx: an error, never a fallback to some schema
+	if _, err := s.GetTenant(context.Background(), "t1"); err == nil || errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("no app: %v", err)
+	}
+	if _, err := s.GetTenant(service.InApp(context.Background(), `x"; DROP TABLE users; --`), "t1"); err == nil {
+		t.Fatal("invalid app accepted")
 	}
 }

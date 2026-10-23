@@ -86,7 +86,7 @@ func newClient(url string) notev1connect.NoteServiceClient {
 
 // as returns a context whose identity the client forwards like the gateway does.
 func as(userID, tenantID, role string) context.Context {
-	return reqctx.WithIdentity(context.Background(), reqctx.Identity{UserID: userID, TenantID: tenantID, Role: role})
+	return reqctx.WithIdentity(context.Background(), reqctx.Identity{AppID: "notes", UserID: userID, TenantID: tenantID, Role: role})
 }
 
 func TestNoteCRUD(t *testing.T) {

@@ -37,11 +37,22 @@ func randomHex(n int) string {
 func newTenantID() string { return "tnt_" + randomHex(8) }
 
 // newRefreshToken returns the opaque token for the client and the hash to store.
-func newRefreshToken() (raw, hash string) {
+// newRefreshToken returns "<app>.<random>": the prefix tells a refresh or a
+// logout which app's schema holds the token. Only the hash is stored.
+func newRefreshToken(appID string) (raw, hash string) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
-	raw = base64.RawURLEncoding.EncodeToString(b)
+	raw = appID + "." + base64.RawURLEncoding.EncodeToString(b)
 	return raw, hashRefreshToken(raw)
+}
+
+// refreshTokenApp is the app prefix of a raw refresh token, "" if malformed.
+func refreshTokenApp(raw string) string {
+	app, rest, ok := strings.Cut(raw, ".")
+	if !ok || rest == "" || !appIDPattern.MatchString(app) {
+		return ""
+	}
+	return app
 }
 
 func hashRefreshToken(raw string) string {

@@ -110,7 +110,7 @@ func (h *IamHandler) RevokeRefreshToken(ctx context.Context, req *iamv1.RevokeRe
 }
 
 func (h *IamHandler) GetMembershipVersion(ctx context.Context, req *iamv1.GetMembershipVersionRequest) (*iamv1.GetMembershipVersionResponse, error) {
-	v, err := h.tokens.MembershipVersion(ctx, req.GetTenantId(), req.GetUserId())
+	v, err := h.tokens.MembershipVersion(ctx, req.GetAppId(), req.GetTenantId(), req.GetUserId())
 	if err != nil {
 		return nil, err
 	}

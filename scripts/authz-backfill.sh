@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Copy relationships of existing data into the central authz service:
-#   iam.memberships (active) → tenant:<tenant>#<role>@user:<user>
-#   note.notes               → note:<id>#tenant@tenant:<tenant>, note:<id>#owner@user:<created_by>
+# Copy relationships of the notes app's existing data into its authz store
+# (schema notes of the authz database):
+#   iam notes.memberships (active) → tenant:<tenant>#<role>@user:<user>
+#   note.notes                     → note:<id>#tenant@tenant:<tenant>, note:<id>#owner@user:<created_by>
 #
 # New changes are synced by each service through its outbox (AUTHZ_SERVICE_URL);
 # this covers what existed before. Safe to run again (existing tuples are kept).
@@ -15,13 +16,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# the notes app: its memberships (iam schema notes) and notes (note database) go
+# to its authz store (authz schema notes)
+APP=notes
 PSQL=${PSQL:-"docker compose -f $ROOT/deploy/compose.yaml exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 -q"}
 
 export_tuples() {
 	# columns: object_type, object_id, relation, subject_type, subject_id, tenant_id
 	$PSQL -d iam -c "COPY (
 		SELECT 'tenant', tenant_id, role, 'user', user_id, tenant_id
-		FROM memberships WHERE removed_at IS NULL
+		FROM $APP.memberships WHERE removed_at IS NULL
 	) TO STDOUT"
 	$PSQL -d note -c "COPY (
 		SELECT 'note', id::text, 'tenant', 'tenant', tenant_id, tenant_id FROM notes
@@ -43,13 +47,13 @@ CREATE TEMP TABLE staging (
 COPY staging FROM STDIN;
 SQL
 		cat
-		cat <<'SQL'
+		cat <<SQL
 \.
-INSERT INTO relation_tuples (object_type, object_id, relation, subject_type, subject_id, subject_relation, tenant_id, created_by)
+INSERT INTO $APP.relation_tuples (object_type, object_id, relation, subject_type, subject_id, subject_relation, tenant_id, created_by)
 SELECT object_type, object_id, relation, subject_type, subject_id, '', tenant_id, 'backfill' FROM staging
 ON CONFLICT DO NOTHING;
 SELECT format('%s tuples read, %s new', (SELECT count(*) FROM staging),
-              (SELECT count(*) FROM tuple_changes WHERE actor = 'backfill' AND changed_at >= now()));
+              (SELECT count(*) FROM $APP.tuple_changes WHERE actor = 'backfill' AND changed_at >= now()));
 COMMIT;
 SQL
 	} | $PSQL -d authz -At

@@ -51,7 +51,7 @@ func (d deps) writeTuples(ctx context.Context, c authz.TupleChanges) error {
 		return out
 	}
 	_, err := d.authz.WriteTuples(ctx, &authzv1.WriteTuplesRequest{
-		Writes: toProto(c.Writes), Deletes: toProto(c.Deletes), DeleteObjects: c.DeleteObjects,
+		App: c.App, Writes: toProto(c.Writes), Deletes: toProto(c.Deletes), DeleteObjects: c.DeleteObjects,
 	})
 	return err
 }

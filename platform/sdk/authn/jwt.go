@@ -15,7 +15,7 @@ import (
 // MembershipVersions returns the current version of a membership,
 // token.RemovedMembershipVersion if it no longer exists.
 type MembershipVersions interface {
-	Current(ctx context.Context, tenantID, userID string) (int64, error)
+	Current(ctx context.Context, appID, tenantID, userID string) (int64, error)
 }
 
 var (
@@ -52,7 +52,7 @@ func (a *JWTAuthenticator) Authenticate(r *http.Request) (reqctx.Identity, error
 		return id, nil
 	}
 
-	current, err := a.versions.Current(r.Context(), claims.TenantID, claims.UserID())
+	current, err := a.versions.Current(r.Context(), claims.AppID(), claims.TenantID, claims.UserID())
 	if err != nil {
 		// can't confirm the membership: fail closed with 503/504 (not 401) so clients retry
 		return reqctx.Identity{}, err

@@ -30,8 +30,8 @@ func NewVersionLookup(rdb *redis.Client, iam iamv1connect.IamServiceClient, ttl 
 	return &versionLookup{rdb: rdb, iam: iam, ttl: ttl, logger: l}
 }
 
-func (v *versionLookup) Current(ctx context.Context, tenantID, userID string) (int64, error) {
-	key := token.MembershipVersionKey(tenantID, userID)
+func (v *versionLookup) Current(ctx context.Context, appID, tenantID, userID string) (int64, error) {
+	key := token.MembershipVersionKey(appID, tenantID, userID)
 
 	if v.rdb != nil {
 		s, err := v.rdb.Get(ctx, key).Result()
@@ -45,7 +45,7 @@ func (v *versionLookup) Current(ctx context.Context, tenantID, userID string) (i
 		}
 	}
 
-	res, err := v.iam.GetMembershipVersion(ctx, &iamv1.GetMembershipVersionRequest{TenantId: tenantID, UserId: userID})
+	res, err := v.iam.GetMembershipVersion(ctx, &iamv1.GetMembershipVersionRequest{AppId: appID, TenantId: tenantID, UserId: userID})
 	var version int64
 	switch {
 	case errors.Is(err, apperr.ErrNotFound):

@@ -6,20 +6,29 @@ import (
 	"testing"
 )
 
-// The platform model (deploy/authz/model.fga) must grant exactly what the RBAC
-// policy of the note service (apps/notes/services/note/internal/service/policy.go) does:
+// The notes app's model (platform module + apps/notes/authz) must grant exactly
+// what the RBAC policy of the note service
+// (apps/notes/services/note/internal/service/policy.go) does:
 //
 //	owner, admin  everything
 //	member        create, read all, update/delete own
 //	viewer        read all
 func TestKitModelMatchesNotePolicy(t *testing.T) {
-	dsl, err := os.ReadFile("../../../../deploy/authz/model.fga")
+	var files []ModuleFile
+	for _, path := range []string{"../../model/platform.fga", "../../../../apps/notes/authz/notes.fga"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, ModuleFile{Name: path, Contents: string(b)})
+	}
+	p, source, err := ParseModules(files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := ParseDSL(string(dsl))
-	if err != nil {
-		t.Fatal(err)
+	// the source tells whether files changed: it must not depend on their order
+	if _, reordered, _ := ParseModules([]ModuleFile{files[1], files[0]}); reordered != source {
+		t.Fatal("source depends on file order")
 	}
 	m, err := NewModel("kit", p)
 	if err != nil {

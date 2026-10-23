@@ -41,7 +41,7 @@ func newAuthzSetup(cc rpcc.ClientComponent, enforce string) (authzSetup, error) 
 	return setup, nil
 }
 
-// authorizer: the central authz service (ReBAC, model deploy/authz/model.fga)
+// authorizer: the central authz service (ReBAC, the app's model apps/<app>/authz)
 // when enforced, otherwise this service's static RBAC policy. Both implement
 // authz.Authorizer, so the service code is identical.
 func (a authzSetup) authorizer() authz.Authorizer {
@@ -49,8 +49,13 @@ func (a authzSetup) authorizer() authz.Authorizer {
 		return authz.NewRBAC(service.NotePolicy)
 	}
 	return authz.NewReBAC(authz.CheckFunc(func(ctx context.Context, object, relation, subject string, c authz.Consistency) (bool, error) {
+		// the caller's app (from its access token) selects the app's store
+		app, err := authz.AppFrom(ctx)
+		if err != nil {
+			return false, err
+		}
 		res, err := a.client.Check(ctx, &authzv1.CheckRequest{
-			Object: object, Relation: relation, Subject: subject, Consistency: toProtoConsistency(c),
+			App: app, Object: object, Relation: relation, Subject: subject, Consistency: toProtoConsistency(c),
 		})
 		return res.GetAllowed(), err
 	}), authz.WithBatchChecker(a.batchCheck))
@@ -58,7 +63,11 @@ func (a authzSetup) authorizer() authz.Authorizer {
 
 // batchCheck: authz.CheckMany in one BatchCheck call.
 func (a authzSetup) batchCheck(ctx context.Context, checks []authz.RelationCheck, c authz.Consistency) ([]authz.RelationResult, error) {
-	req := &authzv1.BatchCheckRequest{Checks: make([]*authzv1.BatchCheckItem, len(checks)), Consistency: toProtoConsistency(c)}
+	app, err := authz.AppFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req := &authzv1.BatchCheckRequest{App: app, Checks: make([]*authzv1.BatchCheckItem, len(checks)), Consistency: toProtoConsistency(c)}
 	for i, ch := range checks {
 		req.Checks[i] = &authzv1.BatchCheckItem{Object: ch.Object, Relation: ch.Relation, Subject: ch.Subject}
 	}
@@ -94,7 +103,7 @@ func (a authzSetup) relationships(ob *outbox.Outbox) authz.Relationships {
 // writeTuples delivers outbox tuple changes to the authz service.
 func (a authzSetup) writeTuples(ctx context.Context, c authz.TupleChanges) error {
 	_, err := a.client.WriteTuples(ctx, &authzv1.WriteTuplesRequest{
-		Writes: toProto(c.Writes), Deletes: toProto(c.Deletes), DeleteObjects: c.DeleteObjects,
+		App: c.App, Writes: toProto(c.Writes), Deletes: toProto(c.Deletes), DeleteObjects: c.DeleteObjects,
 	})
 	return err
 }

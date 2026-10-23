@@ -24,9 +24,9 @@ func NewVersionCache(rdb *redis.Client, ttl time.Duration) *versionCache {
 	return &versionCache{rdb: rdb, ttl: ttl}
 }
 
-func (c *versionCache) SetMembershipVersion(ctx context.Context, tenantID, userID string, version int64) error {
+func (c *versionCache) SetMembershipVersion(ctx context.Context, appID, tenantID, userID string, version int64) error {
 	if c.rdb == nil {
 		return nil
 	}
-	return c.rdb.Set(ctx, token.MembershipVersionKey(tenantID, userID), strconv.FormatInt(version, 10), c.ttl).Err()
+	return c.rdb.Set(ctx, token.MembershipVersionKey(appID, tenantID, userID), strconv.FormatInt(version, 10), c.ttl).Err()
 }
