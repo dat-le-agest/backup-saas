@@ -61,7 +61,7 @@ type Option func(*rpcClient)
 
 // Optional makes the URL optional: without it the client is disabled
 // (Enabled() is false) instead of failing at startup. For upstreams a service
-// can work without, e.g. the central authz service (RBAC fallback).
+// can work without (an optional upstream).
 func Optional() Option { return func(c *rpcClient) { c.optional = true } }
 
 // NewClient: id is the sctx component ID, prefix names the flags (<prefix>-url, <prefix>-timeout).

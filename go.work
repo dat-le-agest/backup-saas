@@ -5,9 +5,6 @@ use (
 	./apps/notes/gateway
 	./apps/notes/services/note
 	./core
-	./platform/authz
-	./platform/gateway
-	./platform/iam
-	./platform/sdk
+	./platform/admin
 	./templates/service
 )

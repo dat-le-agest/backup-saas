@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Builds one service of the workspace:
-#   docker build --build-arg SERVICE=platform/iam -f deploy/docker/Dockerfile .
+#   docker build --build-arg SERVICE=apps/notes/gateway -f deploy/docker/Dockerfile .
 ARG GO_IMAGE=golang:1.27
 ARG RUNTIME_IMAGE=debian:trixie-slim
 

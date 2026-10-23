@@ -1,6 +1,6 @@
 package service
 
-import "sdk/authz"
+import "core/authz"
 
 const ResourceNote = "note"
 

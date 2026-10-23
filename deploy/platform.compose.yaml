@@ -1,5 +1,6 @@
-# Platform: iam, authz, the platform gateway, shared infrastructure (Postgres,
-# Redis) and observability (Alloy → Tempo / Prometheus / Loki → Grafana).
+# Platform: the admin dashboard (manages every app), shared infrastructure
+# (Postgres, Redis) and observability (Alloy → Tempo / Prometheus / Loki → Grafana).
+# Every app runs its own authentication and authorization (core/authn, core/authz).
 # Included by deploy/compose.yaml together with every app's compose file.
 #
 # Services of an app (apps/<app>/compose.yaml) follow the same conventions:
@@ -15,58 +16,49 @@ x-service: &service
     redis: { condition: service_started }
     alloy: { condition: service_started }
   environment: &service-env
-    APP_ENV: dev # enables /v1/auth/dev-login and an ephemeral JWT key
+    APP_ENV: dev # dev conveniences (ephemeral keys, dev login in apps)
     LOG_LEVEL: info
-    REDIS_URL: redis://redis:6379/0
     OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     OTEL_METRIC_EXPORT_INTERVAL: "10000"
     OTEL_RESOURCE_ATTRIBUTES: service.namespace=platform
-    # apps served by the platform, one per apps/<app>: iam and authz give each
-    # its own schema (tenants, memberships, refresh tokens; authorization store)
-    PLATFORM_APPS: notes
 
 services:
-  iam:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/iam } }
+  # creates the platform's database if missing (idempotent, runs on every up)
+  platform-db-init:
+    image: postgres:18.6-alpine
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
     environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: iam
-      GIN_PORT: "3001"
-      AUTHZ_SERVICE_URL: http://authz:3002 # sync memberships to the authz service
-      DB_DSN: postgres://iam:iam@postgres:5432/iam?sslmode=disable
-
-  # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
-  authz:
-    <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/authz } }
-    environment:
-      <<: *service-env
-      OTEL_SERVICE_NAME: authz
-      GIN_PORT: "3002"
-      DB_DSN: postgres://authz:authz@postgres:5432/authz?sslmode=disable
-      # each app's model: the platform module + apps/<app>/authz/*.fga, activated on start when changed
-      AUTHZ_PLATFORM_MODEL: /models/platform
-      AUTHZ_APPS_DIR: /models/apps
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
     volumes:
-      - ../platform/authz/model:/models/platform:ro
-      - ../apps:/models/apps:ro
+      - ./postgres/init.sql:/db-init.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/db-init.sql"]
 
-  # sign-in, tokens, tenants and members (iam)
-  gateway:
+  # the admin dashboard: React UI + API, talks to each app's internal admin API
+  admin:
     <<: *service
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: platform/gateway } }
-    depends_on: [redis, alloy, iam]
-    container_name: gateway
-    # no database
+    build: { context: .., dockerfile: deploy/docker/admin.Dockerfile }
+    container_name: admin
+    depends_on:
+      platform-db-init: { condition: service_completed_successfully }
+      alloy: { condition: service_started }
     environment:
       <<: *service-env
-      OTEL_SERVICE_NAME: gateway
-      GIN_PORT: "8080"
-      JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
-      JWT_AUDIENCE: "*" # tokens of every app
-      IAM_SERVICE_URL: http://iam:3001
-    ports: ["8080:8080"]
+      OTEL_SERVICE_NAME: admin
+      GIN_PORT: "8090"
+      DB_DSN: postgres://admin:admin@postgres:5432/admin?sslmode=disable
+      # first account of the dashboard (dev only: change it, or set your own)
+      ADMIN_BOOTSTRAP_EMAIL: admin@example.com
+      ADMIN_BOOTSTRAP_PASSWORD: change-me-admin-password
+      GRAFANA_URL: http://localhost:3030
+      # managed apps: each app's internal admin URL and its ADMIN_API_KEY
+      ADMIN_APPS: >-
+        [{"id":"notes","name":"Notes","admin_url":"http://notes-gateway:9081",
+          "public_url":"http://localhost:8081","api_key":"dev-notes-admin-key"}]
+    ports: ["8090:8090"]
 
   postgres:
     container_name: postgres
@@ -76,12 +68,12 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
-      # platform databases; each app creates its own with an <app>-db-init job
+      # the admin database; each app creates its own with an <app>-db-init job
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - postgres-data:/var/lib/postgresql
     ports: ["5432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'authz'\" | grep -q 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
       timeout: 3s
       retries: 30

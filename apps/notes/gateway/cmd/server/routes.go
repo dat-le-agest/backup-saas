@@ -5,26 +5,39 @@ import (
 	"net/http"
 
 	"core/apperr"
+	"core/authn"
 	"core/di"
+	"core/httpx"
 	"core/logger"
 	"core/response"
 	"notes-gateway/config"
 	"notes-gateway/internal/handler"
-	"sdk/httpx"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
+const (
+	defaultAuthRatePerMinute = 20
+	defaultAuthRateBurst     = 10
+)
+
 type routeOptions struct {
-	auth   httpx.Authenticator
-	logger logger.Logger
+	auth *authn.Module
+	// per client IP, on the unauthenticated /v1/auth/* endpoints (login, register...)
+	authRatePerMinute, authRateBurst int
+	// devLogin exposes POST /v1/auth/dev-login. Dev environment only.
+	devLogin bool
+	logger   logger.Logger
 }
 
 // registerRoutes is shared by main and tests so both run the same middleware chain.
-// Panic recovery is already installed by ginc. Every route needs an access token:
-// sign-in and tenants are on the platform gateway.
+// Panic recovery is already installed by ginc.
 func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
+	if opts.authRatePerMinute <= 0 || opts.authRateBurst <= 0 {
+		opts.authRatePerMinute, opts.authRateBurst = defaultAuthRatePerMinute, defaultAuthRateBurst
+	}
+
 	r.Use(
 		// first: the span must exist before logs and handlers run
 		otelgin.Middleware(config.ServiceName, otelgin.WithFilter(func(r *http.Request) bool {
@@ -38,10 +51,28 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	v1 := r.Group("/v1", httpx.Auth(opts.auth))
+	// sign-in and tokens: no access token, rate limited per client IP
+	public := r.Group("/v1", httpx.RateLimit(opts.authRatePerMinute, opts.authRateBurst))
+	opts.auth.HTTP.RegisterPublicRoutes(public, opts.devLogin)
+
+	v1 := r.Group("/v1", httpx.Auth(opts.auth.Authenticator))
+	opts.auth.HTTP.RegisterRoutes(v1) // /me, /tenants, /members
 	di.MustGet[*handler.NoteHandler](c).RegisterRoutes(v1)
 
-	r.NoRoute(func(c *gin.Context) {
-		response.Fail(c, fmt.Errorf("%w: route %s %s", apperr.ErrNotFound, c.Request.Method, c.Request.URL.Path))
+	r.NoRoute(notFound)
+}
+
+// registerAdminRoutes: the internal admin server (never published), for the
+// platform's admin service: /admin/v1/* behind the app's admin key.
+func registerAdminRoutes(r *gin.Engine, auth *authn.Module, l logger.Logger) {
+	r.Use(httpx.RequestID(), httpx.AccessLog(l))
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	auth.AdminHTTP.RegisterRoutes(r)
+	r.NoRoute(notFound)
+}
+
+func notFound(c *gin.Context) {
+	response.Fail(c, fmt.Errorf("%w: route %s %s", apperr.ErrNotFound, c.Request.Method, c.Request.URL.Path))
 }

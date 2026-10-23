@@ -2,25 +2,23 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"core/authn"
+	authnmigrations "core/authn/migrations"
 	"core/components/ginc"
+	"core/components/gormc"
+	"core/components/jwtc"
 	"core/components/otelc"
 	"core/components/redisc"
 	"core/components/rpcc"
 	"core/sctx"
 	"notes-gateway/config"
 	"notes-gateway/internal/client"
-	"sdk/authn"
-	"sdk/clients"
-	"sdk/components/jwtc"
 )
-
-// membership versions cached in Redis must outlive the access tokens they protect
-const versionCacheTTL = time.Hour
 
 func main() {
 	if err := run(); err != nil {
@@ -30,15 +28,21 @@ func main() {
 
 // run returns errors instead of exiting so deferred sc.Stop() always executes.
 func run() error {
+	// defined before the service context parses flags (and their env, ADMIN_API_KEY)
+	adminKey := flag.String("admin-api-key", "",
+		"key the admin service sends to the admin API (internal admin port); empty disables the admin API")
+
 	sc := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
-		sctx.WithComponent(jwtc.NewVerifier(config.ComponentJWT)),
+		// the app's own users, tenants, memberships and tokens (core/authn)
+		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(authnmigrations.FS))),
+		sctx.WithComponent(jwtc.NewSigner(config.ComponentJWT)),
 		sctx.WithComponent(redisc.NewRedis(config.ComponentRedis, "")),
-		sctx.WithComponent(rpcc.NewClient(config.ComponentIamClient, config.UpstreamIam)),
 		sctx.WithComponent(rpcc.NewClient(config.ComponentNoteClient, config.UpstreamNote)),
-		// registered last so it is stopped first: stop taking requests, then close clients
+		// registered last so they are stopped first: stop taking requests, then close the rest
+		sctx.WithComponent(ginc.NewGin(config.ComponentAdminGin, ginc.WithFlagPrefix(config.AdminFlagPrefix))),
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
 
@@ -53,17 +57,29 @@ func run() error {
 		}
 	}()
 
-	iam := clients.NewIam(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentIamClient))
+	dbc := sctx.MustGetAs[gormc.GormComponent](sc, config.ComponentDB)
+	if dbc.MigrateOnly() {
+		logger.Info("migrations applied (--db-migrate=only), exiting")
+		return nil
+	}
+
+	auth, err := authn.New(authn.Config{
+		App:      config.App,
+		DB:       dbc.GetDB(),
+		Signer:   sctx.MustGetAs[jwtc.SignerComponent](sc, config.ComponentJWT).Signer(),
+		Redis:    sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client(),
+		DevLogin: sc.EnvName() == sctx.DevEnv,
+		AdminKey: *adminKey,
+		Logger:   sc.Logger("authn"),
+	})
+	if err != nil {
+		return err
+	}
+	if *adminKey == "" {
+		logger.Warn("no admin-api-key: the admin API refuses every request")
+	}
+
 	notes := client.NewNote(sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentNoteClient))
-
-	auth := authn.NewJWTAuthenticator(
-		sctx.MustGetAs[jwtc.VerifierComponent](sc, config.ComponentJWT).Verifier(),
-		authn.NewVersionLookup(
-			sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client(),
-			iam, versionCacheTTL, sc.Logger("authn"),
-		),
-	)
-
 	c, err := buildContainer(notes)
 	if err != nil {
 		return err
@@ -71,10 +87,18 @@ func run() error {
 
 	server := sctx.MustGetAs[ginc.GinComponent](sc, config.ComponentGin)
 	registerRoutes(server.GetRouter(), c, routeOptions{
-		auth:   auth,
-		logger: sc.Logger("http"),
+		auth:              auth,
+		authRatePerMinute: defaultAuthRatePerMinute,
+		authRateBurst:     defaultAuthRateBurst,
+		devLogin:          sc.EnvName() == sctx.DevEnv,
+		logger:            sc.Logger("http"),
 	})
+	admin := sctx.MustGetAs[ginc.GinComponent](sc, config.ComponentAdminGin)
+	registerAdminRoutes(admin.GetRouter(), auth, sc.Logger("admin-http"))
 
+	if err := admin.Run(); err != nil {
+		return err
+	}
 	if err := server.Run(); err != nil {
 		return err
 	}

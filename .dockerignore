@@ -5,3 +5,4 @@
 **/*.pem
 deploy/
 wiki/
+**/node_modules/

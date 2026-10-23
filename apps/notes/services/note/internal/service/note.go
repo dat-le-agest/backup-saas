@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"core/apperr"
+	"core/authz"
 	"core/reqctx"
 	"core/tenancy"
 	"core/uow"
 	"note/internal/model"
-	"sdk/authz"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -46,8 +46,8 @@ type NoteService struct {
 	created metric.Int64Counter
 }
 
-// rel records each note's relationships (tenant, owner) for the central authz
-// service, in the same transaction as the note (outbox).
+// rel records each note's relationships (tenant, owner) with the embedded ReBAC
+// engine, in the same transaction as the note.
 func NewNoteService(repo NoteRepository, az authz.Authorizer, rel authz.Relationships, u uow.UnitOfWork) *NoteService {
 	// example business metric (Prometheus: notes_created_total); the global meter
 	// is set up by core/components/otelc
@@ -128,7 +128,7 @@ func (s *NoteService) List(ctx context.Context, paging *model.Paging) ([]model.N
 }
 
 // withPermissions decides update and delete on every note at once. A denial is
-// false; any other failure (authz service down) fails the call.
+// false; any other failure (engine error) fails the call.
 func (s *NoteService) withPermissions(ctx context.Context, notes []model.Note) ([]model.NoteView, error) {
 	reqs := make([]authz.Request, 0, 2*len(notes))
 	for i := range notes {
@@ -207,7 +207,7 @@ func noteObject(n *model.Note) string {
 }
 
 // noteTuples: a note belongs to its tenant and is owned by its creator
-// (relations "tenant" and "owner" of type note in apps/notes/authz/notes.fga).
+// (relations "tenant" and "owner" of type note in authz/*.fga of this service).
 func noteTuples(n *model.Note) []authz.Tuple {
 	object := noteObject(n)
 	return []authz.Tuple{

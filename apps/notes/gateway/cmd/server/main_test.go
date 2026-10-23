@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,13 +13,17 @@ import (
 
 	notev1 "api/gen/go/apps/notes/note/v1"
 	"api/gen/go/apps/notes/note/v1/notev1connect"
-	"api/gen/go/platform/iam/v1/iamv1connect"
 	"core/apperr"
+	"core/authn"
+	authnmigrations "core/authn/migrations"
+	"core/authn/password"
+	"core/httpx/httpxtest"
 	zaplogger "core/logger/zap"
 	"core/reqctx"
 	"core/rpc"
-	"sdk/gatewaytest"
-	"sdk/token"
+	"core/testdb"
+	"core/token"
+	"notes-gateway/config"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -113,17 +115,25 @@ func (f *fakeNotes) DeleteNote(ctx context.Context, req *notev1.DeleteNoteReques
 	return &notev1.DeleteNoteResponse{}, nil
 }
 
+// stack is the gateway with its real authentication (Postgres, optional Redis)
+// in front of a fake note service.
 type stack struct {
 	gateway *gin.Engine
+	admin   *gin.Engine
 	notes   *fakeNotes
-	iam     *gatewaytest.Iam
-	redis   *miniredis.Miniredis // nil when the gateway runs without Redis
+	auth    *authn.Module
+	signer  *token.Signer
+	redis   *miniredis.Miniredis // nil without Redis
 }
 
 type stackOptions struct {
-	redis   bool
-	iamDown bool
+	redis    bool
+	devLogin bool
+	// auth rate limit; zero uses the defaults
+	ratePerMinute, rateBurst int
 }
+
+const adminKey = "test-admin-key"
 
 func newStack(t *testing.T, o stackOptions) *stack {
 	t.Helper()
@@ -132,55 +142,109 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	notes := &fakeNotes{notes: map[uint64]*notev1.Note{}}
 	nmux := http.NewServeMux()
 	nmux.Handle(notev1connect.NewNoteServiceHandler(notes, rpc.HandlerOptions(log)))
-	notesURL := gatewaytest.ServeH2C(t, nmux)
+	notesURL := httpxtest.ServeH2C(t, nmux)
 
-	iam := gatewaytest.NewIam()
-	iamURL, jwksURL := gatewaytest.ServeIam(t, iam, iam, log)
-	if o.iamDown {
-		// JWKS stays reachable, but gRPC calls go to an address nobody listens on
-		ln, _ := net.Listen("tcp", "127.0.0.1:0")
-		iamURL = "http://" + ln.Addr().String()
-		ln.Close()
-	}
-
-	s := &stack{notes: notes, iam: iam}
+	s := &stack{notes: notes}
 	var rdb *redis.Client
 	if o.redis {
 		s.redis = miniredis.RunT(t)
 		rdb = redis.NewClient(&redis.Options{Addr: s.redis.Addr(), MaxRetries: -1})
 		t.Cleanup(func() { rdb.Close() })
 	}
-	// only tokens of this gateway's app (gatewaytest.App stands for notes)
-	auth := gatewaytest.Authenticator(t, jwksURL, gatewaytest.App, gatewaytest.GRPCClient(iamURL, iamv1connect.NewIamServiceClient), rdb, log)
 
-	c, err := buildContainer(gatewaytest.GRPCClient(notesURL, notev1connect.NewNoteServiceClient))
+	key, _ := token.GenerateKey()
+	s.signer = token.NewSigner(key, "saas-iam", 10*time.Minute)
+	auth, err := authn.New(authn.Config{
+		App: config.App, DB: testdb.New(t, authnmigrations.FS), Signer: s.signer, Redis: rdb,
+		// cheap parameters keep tests fast; production uses password.DefaultParams
+		Hasher:   password.NewHasher(password.Params{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 0),
+		DevLogin: o.devLogin, AdminKey: adminKey, Logger: log,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.auth = auth
+
+	c, err := buildContainer(httpxtest.GRPCClient(notesURL, notev1connect.NewNoteServiceClient))
 	if err != nil {
 		t.Fatal(err)
 	}
 	gin.SetMode(gin.TestMode)
-	s.gateway = gin.New()
-	registerRoutes(s.gateway, c, routeOptions{auth: auth, logger: log})
+	s.gateway, s.admin = gin.New(), gin.New()
+	registerRoutes(s.gateway, c, routeOptions{
+		auth: auth, devLogin: o.devLogin, logger: log,
+		authRatePerMinute: o.ratePerMinute, authRateBurst: o.rateBurst,
+	})
+	registerAdminRoutes(s.admin, auth, log)
 	return s
 }
 
-func (s *stack) do(method, path, body, bearer string, headers ...string) gatewaytest.Result {
-	return gatewaytest.Do(s.gateway, method, path, body, bearer, headers...)
+func (s *stack) do(method, path, body, bearer string, headers ...string) httpxtest.Result {
+	return httpxtest.Do(s.gateway, method, path, body, bearer, headers...)
+}
+
+func (s *stack) adminDo(method, path, body string) httpxtest.Result {
+	return httpxtest.Do(s.admin, method, path, body, adminKey)
+}
+
+// signIn registers email and returns its user id and tenant-less access token.
+func (s *stack) signIn(t *testing.T, email string) (userID, access string) {
+	t.Helper()
+	res := s.do("POST", "/v1/auth/register", `{"email":"`+email+`","password":"correct horse battery"}`, "")
+	if res.Status != 201 {
+		t.Fatalf("register %s: %d %v", email, res.Status, res.Body)
+	}
+	user, _ := res.Data()["user"].(map[string]any)
+	tokens, _ := res.Data()["tokens"].(map[string]any)
+	return user["id"].(string), tokens["access_token"].(string)
+}
+
+// owner: email registers, creates a tenant and switches into it.
+func (s *stack) owner(t *testing.T, email string) (userID, tenantID, access string) {
+	t.Helper()
+	userID, tenantless := s.signIn(t, email)
+	res := s.do("POST", "/v1/tenants", `{"name":"Acme"}`, tenantless)
+	if res.Status != 201 {
+		t.Fatalf("create tenant: %d %v", res.Status, res.Body)
+	}
+	tenantID = res.Data()["id"].(string)
+	return userID, tenantID, s.switchTo(t, tenantless, tenantID)
+}
+
+func (s *stack) switchTo(t *testing.T, access, tenantID string) string {
+	t.Helper()
+	res := s.do("POST", "/v1/auth/switch-tenant", `{"tenant_id":"`+tenantID+`"}`, access)
+	if res.Status != 200 {
+		t.Fatalf("switch tenant: %d %v", res.Status, res.Body)
+	}
+	return res.Data()["access_token"].(string)
+}
+
+// member: email registers and is added to tenantID with role by the owner.
+func (s *stack) member(t *testing.T, ownerToken, tenantID, email, role string) (userID, access string) {
+	t.Helper()
+	userID, tenantless := s.signIn(t, email)
+	if res := s.do("POST", "/v1/members", `{"email":"`+email+`","role":"`+role+`"}`, ownerToken); res.Status != 201 {
+		t.Fatalf("add member: %d %v", res.Status, res.Body)
+	}
+	return userID, s.switchTo(t, tenantless, tenantID)
 }
 
 func TestNotesThroughGateway(t *testing.T) {
 	s := newStack(t, stackOptions{redis: true})
-	tok := s.iam.Member("u1", "t1", "member", 1)
+	_, tenantID, owner := s.owner(t, "olivia@example.com")
+	userID, tok := s.member(t, owner, tenantID, "mia@example.com", "member")
 
 	res := s.do(http.MethodPost, "/v1/notes", `{"title":"first","content":"hello"}`, tok, reqctx.HeaderRequestID, "trace-abc-123")
 	if res.Status != http.StatusCreated {
 		t.Fatalf("create: %d %v", res.Status, res.Body)
 	}
 	note := res.Data()
-	if note["id"] != float64(1) || note["title"] != "first" || note["created_by"] != "u1" || note["created_at"] != "2026-01-02T03:04:05Z" {
+	if note["id"] != float64(1) || note["title"] != "first" || note["created_by"] != userID || note["created_at"] != "2026-01-02T03:04:05Z" {
 		t.Fatalf("create body: %v", res.Body)
 	}
-	// identity (with the app) from the verified token and the request id reached the upstream
-	if s.notes.lastID != (reqctx.Identity{AppID: gatewaytest.App, UserID: "u1", TenantID: "t1", Role: "member"}) || s.notes.lastReq != "trace-abc-123" {
+	// identity (app, user, tenant, role) from the verified token and the request id reached the upstream
+	if s.notes.lastID != (reqctx.Identity{AppID: config.App, UserID: userID, TenantID: tenantID, Role: "member"}) || s.notes.lastReq != "trace-abc-123" {
 		t.Fatalf("upstream metadata: %+v %q", s.notes.lastID, s.notes.lastReq)
 	}
 	if res.Header.Get(reqctx.HeaderRequestID) != "trace-abc-123" {
@@ -205,17 +269,93 @@ func TestNotesThroughGateway(t *testing.T) {
 	if res = s.do(http.MethodGet, "/v1/notes/1", "", tok); res.Status != 404 || res.ErrCode() != "not_found" {
 		t.Fatalf("get after delete: %d %v", res.Status, res.Body)
 	}
+
+}
+
+func TestAuthTenantsAndMembers(t *testing.T) {
+	s := newStack(t, stackOptions{devLogin: true})
+
+	res := s.do("POST", "/v1/auth/dev-login", `{"user_id":"alice"}`, "")
+	pair := res.Data()
+	if res.Status != 200 || pair["token_type"] != "Bearer" || pair["access_token"] == "" || pair["refresh_token"] == "" {
+		t.Fatalf("dev login: %d %v", res.Status, res.Body)
+	}
+	claims, err := s.signer.Verifier(config.App).Verify(pair["access_token"].(string))
+	if err != nil || claims.UserID() != "alice" || claims.AppID() != config.App {
+		t.Fatalf("token: %+v %v", claims, err)
+	}
+
+	// a tenant-less token reaches tenant-less endpoints
+	access := pair["access_token"].(string)
+	if res := s.do("GET", "/v1/me/tenants", "", access); res.Status != 200 {
+		t.Fatalf("my tenants: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("GET", "/v1/members", "", access); res.Status != 403 {
+		t.Fatalf("members without a tenant: %d %v", res.Status, res.Body)
+	}
+
+	refreshed := s.do("POST", "/v1/auth/refresh", `{"refresh_token":"`+pair["refresh_token"].(string)+`"}`, "")
+	if refreshed.Status != 200 {
+		t.Fatalf("refresh: %d %v", refreshed.Status, refreshed.Body)
+	}
+	// single use: replaying the first refresh token revokes the family
+	if res := s.do("POST", "/v1/auth/refresh", `{"refresh_token":"`+pair["refresh_token"].(string)+`"}`, ""); res.Status != 401 {
+		t.Fatalf("replayed refresh: %d", res.Status)
+	}
+	if res := s.do("POST", "/v1/auth/refresh", `{"refresh_token":"`+refreshed.Data()["refresh_token"].(string)+`"}`, ""); res.Status != 401 {
+		t.Fatalf("family not revoked: %d", res.Status)
+	}
+
+	// members: owner/admin rules come from the services
+	_, tenantID, owner := s.owner(t, "olivia@example.com")
+	maxID, maxTok := s.member(t, owner, tenantID, "max@example.com", "member")
+	res = s.do("PATCH", "/v1/members/"+maxID, `{"role":"viewer"}`, owner)
+	if res.Status != 200 || res.Data()["role"] != "viewer" || res.Data()["email"] != "max@example.com" {
+		t.Fatalf("update member: %d %v", res.Status, res.Body)
+	}
+	// max's token still says member: stale
+	if res := s.do("GET", "/v1/members", "", maxTok); res.Status != 401 || !strings.Contains(res.ErrMsg(), "refresh") {
+		t.Fatalf("stale token after role change: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("DELETE", "/v1/members/"+maxID, "", owner); res.Status != 204 {
+		t.Fatalf("remove member: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("GET", "/v1/members", "", owner); res.Status != 200 || len(res.Body["data"].([]any)) != 1 {
+		t.Fatalf("members after remove: %d %v", res.Status, res.Body)
+	}
+}
+
+func TestPasswordEndpoints(t *testing.T) {
+	s := newStack(t, stackOptions{})
+	_, access := s.signIn(t, "alice@example.com")
+
+	res := s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"correct horse battery"}`, "")
+	if res.Status != 200 || res.Data()["token_type"] != "Bearer" {
+		t.Fatalf("login: %d %v", res.Status, res.Body)
+	}
+	res = s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"nope nope nope"}`, "")
+	if res.Status != 401 || res.ErrMsg() != "unauthenticated: invalid email or password" {
+		t.Fatalf("bad login: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("GET", "/v1/me", "", access); res.Status != 200 || res.Data()["email"] != "alice@example.com" {
+		t.Fatalf("me: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("POST", "/v1/auth/change-password", `{"current_password":"correct horse battery","new_password":"a brand new passphrase"}`, access); res.Status != 204 {
+		t.Fatalf("change password: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"a brand new passphrase"}`, ""); res.Status != 200 {
+		t.Fatalf("login with new password: %d %v", res.Status, res.Body)
+	}
 }
 
 func TestGatewayErrors(t *testing.T) {
 	s := newStack(t, stackOptions{})
-	tok := s.iam.Member("u1", "t1", "member", 1)
+	_, _, tok := s.owner(t, "olivia@example.com")
 
 	other, _ := token.GenerateKey()
-	forged, _, _ := token.NewSigner(other, gatewaytest.Issuer, time.Minute).Sign("u1", gatewaytest.App, "t1", "owner", 1)
-	// a valid token of another app, for a membership that exists
-	s.iam.SetVersion("t1", "u1", 1)
-	otherApp := s.iam.AppToken("crm", "u1", "t1", "member", 1)
+	forged, _, _ := token.NewSigner(other, "saas-iam", time.Minute).Sign("u1", config.App, "t1", "owner", 1)
+	// a valid signature, but issued for another app
+	otherApp, _, _ := s.signer.Sign("u1", "crm", "", "", 0)
 
 	cases := []struct {
 		name, method, path, body, bearer string
@@ -225,17 +365,16 @@ func TestGatewayErrors(t *testing.T) {
 	}{
 		{"no auth", "GET", "/v1/notes", "", "", nil, 401, "unauthenticated", ""},
 		{"basic auth", "GET", "/v1/notes", "", "", []string{"Authorization", "Basic dTE6cHc="}, 401, "unauthenticated", ""},
-		{"old dev header", "GET", "/v1/notes", "", "", []string{"Authorization", "Dev u1:t1:owner"}, 401, "unauthenticated", ""},
 		{"garbage token", "GET", "/v1/notes", "", "not.a.jwt", nil, 401, "unauthenticated", ""},
 		{"forged token", "GET", "/v1/notes", "", forged, nil, 401, "unauthenticated", ""},
-		{"token of another app", "GET", "/v1/notes", "", otherApp, nil, 401, "unauthenticated", ""},
+		{"token of another app", "GET", "/v1/me", "", otherApp, nil, 401, "unauthenticated", ""},
 		{"upstream validation", "POST", "/v1/notes", `{"title":" "}`, tok, nil, 400, "invalid_input", "invalid input: title is required"},
 		{"bad json", "POST", "/v1/notes", `{`, tok, nil, 400, "invalid_input", "invalid input: invalid JSON body"},
 		{"bad id", "GET", "/v1/notes/abc", "", tok, nil, 400, "invalid_input", ""},
 		{"missing", "PATCH", "/v1/notes/42", `{}`, tok, nil, 404, "not_found", "not found"},
 		{"unknown route", "GET", "/v2/nothing", "", "", nil, 404, "not_found", ""},
-		// sign-in lives on the platform gateway
-		{"no auth routes here", "POST", "/v1/auth/login", `{}`, "", nil, 404, "not_found", ""},
+		{"dev login disabled", "POST", "/v1/auth/dev-login", `{"user_id":"u1"}`, "", nil, 404, "not_found", ""},
+		{"admin API not public", "GET", "/admin/v1/users", "", "", nil, 404, "not_found", ""},
 		{"upstream internal", "POST", "/v1/notes", `{"title":"explode"}`, tok, nil, 500, "internal", "Internal Server Error"},
 	}
 	for _, tc := range cases {
@@ -247,7 +386,6 @@ func TestGatewayErrors(t *testing.T) {
 			t.Errorf("%s: missing request_id in error body", tc.name)
 		}
 	}
-
 	if res := s.do("GET", "/healthz", "", ""); res.Status != 200 {
 		t.Fatalf("healthz: %d", res.Status)
 	}
@@ -256,7 +394,8 @@ func TestGatewayErrors(t *testing.T) {
 // Field errors from a service travel over gRPC (google.rpc.BadRequest) into "details".
 func TestFieldErrorDetails(t *testing.T) {
 	s := newStack(t, stackOptions{})
-	res := s.do("POST", "/v1/notes", `{"title":" "}`, s.iam.Member("u1", "t1", "member", 1))
+	_, _, tok := s.owner(t, "olivia@example.com")
+	res := s.do("POST", "/v1/notes", `{"title":" "}`, tok)
 	e, _ := res.Body["error"].(map[string]any)
 	details, _ := e["details"].([]any)
 	if res.Status != 400 || len(details) != 1 {
@@ -265,86 +404,127 @@ func TestFieldErrorDetails(t *testing.T) {
 	if d := details[0].(map[string]any); d["field"] != "title" || d["description"] != "is required" {
 		t.Fatalf("detail %v", d)
 	}
-
-	res = s.do("GET", "/v1/notes/abc", "", s.iam.Member("u1", "t1", "member", 1))
-	e, _ = res.Body["error"].(map[string]any)
-	if details, _ := e["details"].([]any); len(details) != 1 || details[0].(map[string]any)["field"] != "id" {
-		t.Fatalf("gateway-side field error: %v", res.Body)
-	}
 }
 
-// A role change or removal bumps the membership version: tokens issued before
-// are rejected right away, not when they expire.
-func TestStaleTokensRejected(t *testing.T) {
+// Membership versions are cached in Redis; without Redis (or when it fails)
+// the database answers.
+func TestVersionCacheAndFallbacks(t *testing.T) {
 	for _, withRedis := range []bool{true, false} {
 		t.Run(fmt.Sprintf("redis=%v", withRedis), func(t *testing.T) {
 			s := newStack(t, stackOptions{redis: withRedis})
-			tok := s.iam.Member("u1", "t1", "admin", 1)
-
+			ownerID, tenantID, tok := s.owner(t, "olivia@example.com")
+			for i := 0; i < 3; i++ {
+				if res := s.do("GET", "/v1/notes", "", tok); res.Status != 200 {
+					t.Fatalf("request %d: %d %v", i, res.Status, res.Body)
+				}
+			}
+			if s.redis == nil {
+				return
+			}
+			if v, _ := s.redis.Get(token.MembershipVersionKey(config.App, tenantID, ownerID)); v != "1" {
+				t.Fatalf("cached %q", v)
+			}
+			// Redis down: the database answers
+			s.redis.Close()
 			if res := s.do("GET", "/v1/notes", "", tok); res.Status != 200 {
-				t.Fatalf("before change: %d %v", res.Status, res.Body)
-			}
-
-			// iam demotes u1: bumps the version and publishes it (write-through)
-			s.iam.SetVersion("t1", "u1", 2)
-			if s.redis != nil {
-				s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u1"), "2")
-			}
-			res := s.do("GET", "/v1/notes", "", tok)
-			if res.Status != 401 || !strings.Contains(res.ErrMsg(), "refresh") {
-				t.Fatalf("stale token: %d %v", res.Status, res.Body)
-			}
-
-			// a token with the new version works
-			if res := s.do("GET", "/v1/notes", "", s.iam.Member("u1", "t1", "viewer", 2)); res.Status != 200 {
-				t.Fatalf("fresh token: %d %v", res.Status, res.Body)
-			}
-
-			// removal
-			s.iam.RemoveMembership("t1", "u1")
-			if s.redis != nil {
-				s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u1"), strconv.FormatInt(token.RemovedMembershipVersion, 10))
-			}
-			if res := s.do("GET", "/v1/notes", "", s.iam.Token("u1", "t1", "viewer", 2)); res.Status != 401 {
-				t.Fatalf("removed member: %d %v", res.Status, res.Body)
+				t.Fatalf("redis down: %d %v", res.Status, res.Body)
 			}
 		})
 	}
 }
 
-func TestVersionCacheAndFallbacks(t *testing.T) {
-	s := newStack(t, stackOptions{redis: true})
-	tok := s.iam.Member("u1", "t1", "member", 1)
-
-	for i := 0; i < 5; i++ {
-		if res := s.do("GET", "/v1/notes", "", tok); res.Status != 200 {
-			t.Fatalf("request %d: %d", i, res.Status)
+func TestAuthEndpointsAreRateLimited(t *testing.T) {
+	s := newStack(t, stackOptions{ratePerMinute: 60, rateBurst: 3})
+	body := `{"email":"alice@example.com","password":"guess guess guess"}`
+	for i := 0; i < 3; i++ {
+		if res := s.do("POST", "/v1/auth/login", body, ""); res.Status != 401 {
+			t.Fatalf("attempt %d: %d", i, res.Status)
 		}
 	}
-	if n := s.iam.VersionCalls.Load(); n != 1 {
-		t.Fatalf("iam asked %d times, want 1 (then served from Redis)", n)
-	}
-	if v, _ := s.redis.Get(token.MembershipVersionKey(gatewaytest.App, "t1", "u1")); v != "1" {
-		t.Fatalf("cached %q", v)
-	}
-
-	// the version published in Redis is authoritative: iam's stale answer is never consulted
-	s.redis.Set(token.MembershipVersionKey(gatewaytest.App, "t1", "u2"), "5")
-	if res := s.do("GET", "/v1/notes", "", s.iam.Member("u2", "t1", "member", 4)); res.Status != 401 {
-		t.Fatalf("redis must win over a stale token: %d", res.Status)
-	}
-
-	// Redis down: still works by asking iam
-	s.redis.Close()
-	if res := s.do("GET", "/v1/notes", "", tok); res.Status != 200 {
-		t.Fatalf("redis down: %d %v", res.Status, res.Body)
+	res := s.do("POST", "/v1/auth/login", body, "")
+	if res.Status != http.StatusTooManyRequests || res.ErrCode() != "too_many_requests" || res.Header.Get("Retry-After") == "" {
+		t.Fatalf("over limit: %d %v %v", res.Status, res.Body, res.Header)
 	}
 }
 
-func TestIamDownFailsClosed(t *testing.T) {
-	s := newStack(t, stackOptions{iamDown: true})
-	res := s.do("GET", "/v1/notes", "", s.iam.Token("u1", "t1", "owner", 1))
-	if res.Status != http.StatusServiceUnavailable {
-		t.Fatalf("got %d %v", res.Status, res.Body)
+// The admin API: on its own server, behind the app's admin key.
+func TestAdminAPI(t *testing.T) {
+	s := newStack(t, stackOptions{})
+	ownerID, tenantID, owner := s.owner(t, "olivia@example.com")
+	maxID, maxTok := s.member(t, owner, tenantID, "max@example.com", "member")
+
+	// the key is required
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/users", "", ""); res.Status != 401 {
+		t.Fatalf("no key: %d", res.Status)
+	}
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/users", "", "wrong-key"); res.Status != 401 {
+		t.Fatalf("wrong key: %d", res.Status)
+	}
+
+	res := s.adminDo("GET", "/admin/v1/stats", "")
+	if res.Status != 200 || res.Data()["app"] != config.App || res.Data()["users"] != float64(2) || res.Data()["tenants"] != float64(1) {
+		t.Fatalf("stats: %d %v", res.Status, res.Body)
+	}
+	res = s.adminDo("GET", "/admin/v1/users?q=max", "")
+	if list, _ := res.Body["data"].([]any); res.Status != 200 || len(list) != 1 || list[0].(map[string]any)["id"] != maxID {
+		t.Fatalf("search users: %d %v", res.Status, res.Body)
+	}
+	res = s.adminDo("GET", "/admin/v1/users/"+maxID, "")
+	if ms, _ := res.Data()["memberships"].([]any); res.Status != 200 || len(ms) != 1 {
+		t.Fatalf("get user: %d %v", res.Status, res.Body)
+	}
+
+	// disabling ends max's access at once and refuses sign-in
+	if res := s.adminDo("PUT", "/admin/v1/users/"+maxID+"/disabled", `{"disabled":true}`); res.Status != 200 || res.Data()["disabled"] != true {
+		t.Fatalf("disable: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("GET", "/v1/notes", "", maxTok); res.Status != 401 {
+		t.Fatalf("disabled user's tenant token: %d", res.Status)
+	}
+	if res := s.do("POST", "/v1/auth/login", `{"email":"max@example.com","password":"correct horse battery"}`, ""); res.Status != 403 {
+		t.Fatalf("disabled user's login: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("PUT", "/admin/v1/users/"+maxID+"/disabled", `{"disabled":false}`); res.Status != 200 {
+		t.Fatalf("enable: %d", res.Status)
+	}
+
+	// password reset by an administrator
+	if res := s.adminDo("PUT", "/admin/v1/users/"+maxID+"/password", `{"password":"short"}`); res.Status != 400 {
+		t.Fatalf("weak password: %d", res.Status)
+	}
+	if res := s.adminDo("PUT", "/admin/v1/users/"+maxID+"/password", `{"password":"reset by the admin"}`); res.Status != 204 {
+		t.Fatalf("set password: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("POST", "/v1/auth/login", `{"email":"max@example.com","password":"reset by the admin"}`, ""); res.Status != 200 {
+		t.Fatalf("login after reset: %d %v", res.Status, res.Body)
+	}
+
+	// tenants and members
+	res = s.adminDo("GET", "/admin/v1/tenants", "")
+	if list, _ := res.Body["data"].([]any); res.Status != 200 || len(list) != 1 || list[0].(map[string]any)["members"] != float64(2) {
+		t.Fatalf("tenants: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("PATCH", "/admin/v1/tenants/"+tenantID+"/members/"+ownerID, `{"role":"member"}`); res.Status != 400 {
+		t.Fatalf("demoting the last owner: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("PATCH", "/admin/v1/tenants/"+tenantID+"/members/"+maxID, `{"role":"admin"}`); res.Status != 200 || res.Data()["role"] != "admin" {
+		t.Fatalf("promote: %d %v", res.Status, res.Body)
+	}
+	if res := s.adminDo("DELETE", "/admin/v1/tenants/"+tenantID+"/members/"+maxID, ""); res.Status != 204 {
+		t.Fatalf("remove member: %d %v", res.Status, res.Body)
+	}
+
+	// deleting the tenant ends the owner's access to it
+	if res := s.adminDo("DELETE", "/admin/v1/tenants/"+tenantID, ""); res.Status != 204 {
+		t.Fatalf("delete tenant: %d %v", res.Status, res.Body)
+	}
+	if res := s.do("GET", "/v1/notes", "", owner); res.Status != 401 {
+		t.Fatalf("owner token after tenant deleted: %d", res.Status)
+	}
+	if res := s.adminDo("GET", "/admin/v1/tenants/"+tenantID, ""); res.Status != 404 {
+		t.Fatalf("deleted tenant: %d", res.Status)
+	}
+	if res := httpxtest.Do(s.admin, "GET", "/healthz", "", ""); res.Status != 200 {
+		t.Fatalf("admin healthz: %d", res.Status)
 	}
 }

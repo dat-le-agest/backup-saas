@@ -7,18 +7,17 @@ import (
 	"os/signal"
 	"syscall"
 
+	"core/authz/rebac"
+	"core/components/authzc"
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/otelc"
-	"core/components/rpcc"
 	"core/di"
-	"core/outbox"
 	"core/sctx"
+	modelauthz "note/authz"
 	"note/config"
 	grpctransport "note/internal/transport/rpc"
 	"note/migrations"
-	"sdk/authz"
-	"sdk/components/authzc"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,7 +35,6 @@ func run() error {
 		// first: activated before the components it instruments, stopped last to flush
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
 		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(migrations.FS))),
-		sctx.WithComponent(rpcc.NewClient(config.ComponentAuthzClient, config.UpstreamAuthz, rpcc.Optional())),
 		sctx.WithComponent(authzc.NewSettings(config.ComponentAuthz)),
 		// registered after db so it is stopped first: drain HTTP, then close db
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
@@ -61,27 +59,26 @@ func run() error {
 	}
 	db := dbc.GetDB()
 
-	authzSettings, err := newAuthzSetup(
-		sctx.MustGetAs[rpcc.ClientComponent](sc, config.ComponentAuthzClient),
-		sctx.MustGetAs[authzc.SettingsComponent](sc, config.ComponentAuthz).Enforce(),
-	)
+	// embedded ReBAC engine: its tables in schema authz of this service's
+	// database (migrated with the service's migrations), model from authz/*.fga
+	engineDSN := ""
+	if dbc.MigrateMode() != gormc.MigrateOff {
+		engineDSN = dbc.DSN()
+	}
+	engine, err := rebac.New(context.Background(), db, rebac.Config{Modules: modelauthz.FS, DSN: engineDSN, Logger: sc.Logger("rebac")})
 	if err != nil {
 		return err
 	}
-	logger.Infof("authorization: enforce=%s, relationship sync=%v", authzSettings.enforce, authzSettings.client != nil)
+	authzSettings := authzSetup{
+		enforce: sctx.MustGetAs[authzc.SettingsComponent](sc, config.ComponentAuthz).Enforce(),
+		engine:  engine,
+	}
+	logger.Infof("authorization: enforce=%s (relationships recorded by the embedded engine)", authzSettings.enforce)
 
 	c, err := buildContainer(db, sc.Logger("app"), authzSettings)
 	if err != nil {
 		return err
 	}
-
-	// delivers outbox messages (relationship changes) after commit
-	relay := di.MustGet[*outbox.Outbox](c).NewRelay(db, sc.Logger("outbox"), outbox.RelayOptions{})
-	if authzSettings.client != nil {
-		relay.Handle(authz.TuplesTopic, authz.DeliverTuples(authzSettings.writeTuples))
-	}
-	relay.Start()
-	defer relay.Stop() // runs before sc.Stop(): the database is still open
 
 	server := sctx.MustGetAs[ginc.GinComponent](sc, config.ComponentGin)
 	router := server.GetRouter()

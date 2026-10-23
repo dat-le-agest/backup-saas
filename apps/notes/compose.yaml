@@ -1,5 +1,6 @@
-# Notes app: the note service and the notes gateway. Included by deploy/compose.yaml;
-# uses the platform's Postgres, Redis, iam, authz and Alloy (deploy/platform.compose.yaml).
+# Notes app: the notes gateway (public API + the app's own authentication,
+# core/authn) and the note service. Included by deploy/compose.yaml; uses the
+# platform's Postgres, Redis and Alloy (deploy/platform.compose.yaml).
 # Paths here are relative to this folder.
 
 x-service: &service
@@ -44,22 +45,28 @@ services:
       <<: *service-env
       OTEL_SERVICE_NAME: note
       GIN_PORT: "3000"
-      AUTHZ_SERVICE_URL: http://authz:3002 # sync note relationships to the authz service
-      AUTHZ_ENFORCE: rbac                   # switch to rebac after make authz-backfill (model: apps/notes/authz)
+      # who decides: rbac (NotePolicy) or rebac (embedded engine, model authz/notes.fga);
+      # the engine records relationships either way, so switching needs no backfill
+      AUTHZ_ENFORCE: rbac
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
 
-  # public REST of the notes app (every route needs an access token)
+  # public API of the notes app, with its own authentication (core/authn):
+  # users, tenants, members and tokens in the notes_auth database
   notes-gateway:
     <<: *service
     build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { SERVICE: apps/notes/gateway } }
-    depends_on: [redis, alloy, iam, note]
-    # no database
+    depends_on:
+      notes-db-init: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+      alloy: { condition: service_started }
+      note: { condition: service_started }
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: notes-gateway
       GIN_PORT: "8081"
-      JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
-      JWT_AUDIENCE: notes # only tokens issued for this app
-      IAM_SERVICE_URL: http://iam:3001
+      DB_DSN: postgres://notes_auth:notes_auth@postgres:5432/notes_auth?sslmode=disable
       NOTE_SERVICE_URL: http://note:3000
+      # internal admin API for the admin dashboard: never published
+      ADMIN_GIN_PORT: "9081"
+      ADMIN_API_KEY: dev-notes-admin-key # the admin service's ADMIN_APPS has the same key
     ports: ["8081:8081"]

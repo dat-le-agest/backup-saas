@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"core/apperr"
+	"core/authz"
 	"core/reqctx"
 	"core/uow"
-	"sdk/authz"
 	"template/internal/model"
 )
 
@@ -199,7 +199,7 @@ func TestGetReturnsPermissions(t *testing.T) {
 	}
 }
 
-// A failure other than a denial (authz service down) fails the list instead of
+// A failure other than a denial (engine error) fails the list instead of
 // silently showing everything as forbidden.
 func TestListFailsWhenPermissionsCantBeDecided(t *testing.T) {
 	// the list check passes, the per-note checks fail

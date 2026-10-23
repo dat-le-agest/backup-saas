@@ -54,16 +54,36 @@ type Config struct {
 type ginEngine struct {
 	*Config
 	id         string
+	prefix     string // flag prefix: "admin" → --admin-gin-port / ADMIN_GIN_PORT
 	logger     logger.Logger
 	router     *gin.Engine
 	httpServer *http.Server
 }
 
-func NewGin(id string) *ginEngine {
-	return &ginEngine{
+type Option func(*ginEngine)
+
+// WithFlagPrefix prefixes the component's flags, for a second server in one
+// service: WithFlagPrefix("admin") reads --admin-gin-port / ADMIN_GIN_PORT...
+func WithFlagPrefix(prefix string) Option {
+	return func(g *ginEngine) { g.prefix = prefix }
+}
+
+func NewGin(id string, opts ...Option) *ginEngine {
+	g := &ginEngine{
 		Config: new(Config),
 		id:     id,
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
+}
+
+func (g *ginEngine) flagName(name string) string {
+	if g.prefix == "" {
+		return name
+	}
+	return g.prefix + "-" + name
 }
 
 func (g *ginEngine) ID() string {
@@ -71,46 +91,46 @@ func (g *ginEngine) ID() string {
 }
 
 func (g *ginEngine) InitFlags() {
-	flag.IntVar(&g.port, "gin-port", defaultPort, "gin server port - Default 3000")
+	flag.IntVar(&g.port, g.flagName("gin-port"), defaultPort, "gin server port - Default 3000")
 
 	flag.StringVar(
 		&g.ginMode,
-		"gin-mode",
+		g.flagName("gin-mode"),
 		"",
 		"gin mode (debug | release) - Default derived from app-env (dev → debug, otherwise release)",
 	)
 
 	flag.StringVar(
 		&g.trustedProxies,
-		"gin-trusted-proxies",
+		g.flagName("gin-trusted-proxies"),
 		"",
 		"comma-separated trusted proxy IPs/CIDRs for ClientIP() - Default none",
 	)
 
 	flag.IntVar(
 		&g.readTimeout,
-		"gin-read-timeout",
+		g.flagName("gin-read-timeout"),
 		defaultReadTimeout,
 		"max duration in seconds for reading the entire request - Default 10",
 	)
 
 	flag.IntVar(
 		&g.writeTimeout,
-		"gin-write-timeout",
+		g.flagName("gin-write-timeout"),
 		defaultWriteTimeout,
 		"max duration in seconds before timing out writes of the response, 0 = no timeout (SSE/streaming) - Default 10",
 	)
 
 	flag.IntVar(
 		&g.idleTimeout,
-		"gin-idle-timeout",
+		g.flagName("gin-idle-timeout"),
 		defaultIdleTimeout,
 		"max duration in seconds to wait for the next request on keep-alive connections - Default 60",
 	)
 
 	flag.IntVar(
 		&g.shutdownTimeout,
-		"gin-shutdown-timeout",
+		g.flagName("gin-shutdown-timeout"),
 		defaultShutdownTimeout,
 		"max duration in seconds to wait for in-flight requests on shutdown - Default 10",
 	)

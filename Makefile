@@ -1,4 +1,4 @@
-.PHONY: service test vet jwt-key up down down-v logs ps deps migration authz-backfill tools proto proto-lint proto-format proto-check proto-breaking
+.PHONY: service test vet jwt-key up down down-v logs ps deps migration admin-web admin-web-dev tools proto proto-lint proto-format proto-check proto-breaking
 
 BIN := $(CURDIR)/.bin
 export PATH := $(BIN):$(PATH)
@@ -17,7 +17,7 @@ COMPOSE := docker compose -f deploy/compose.yaml
 
 up:
 	$(COMPOSE) up -d --build
-	@echo "gateway http://localhost:8080 | notes http://localhost:8081 | grafana http://localhost:3030 | alloy http://localhost:12345"
+	@echo "admin http://localhost:8090 | notes http://localhost:8081 | grafana http://localhost:3030 | alloy http://localhost:12345"
 
 # only Postgres + Redis, to run services with `go run` against them
 deps:
@@ -30,7 +30,7 @@ down-v:
 	$(COMPOSE) down -v
 
 logs:
-	$(COMPOSE) logs -f --tail=100 iam authz gateway note notes-gateway
+	$(COMPOSE) logs -f --tail=100 admin notes-gateway note
 
 ps:
 	$(COMPOSE) ps
@@ -45,17 +45,21 @@ migration:
 	f="$$dir/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$f" && echo "created $$f"
 
-# copy relationships of existing memberships and notes into the authz service
-authz-backfill:
-	./scripts/authz-backfill.sh
+# admin dashboard (platform/admin/web): build into dist/ (embedded by the admin
+# service), or run the dev server on :5173 against the admin API on :8090
+admin-web:
+	cd platform/admin/web && npm ci --no-audit --no-fund && npm run build
 
-# Ed25519 signing key for iam access tokens: make jwt-key out=platform/iam/jwt.pem
-out ?= platform/iam/jwt.pem
+admin-web-dev:
+	cd platform/admin/web && npm install --no-audit --no-fund && npm run dev
+
+# Ed25519 signing key for an app's access tokens: make jwt-key out=apps/notes/gateway/jwt.pem
+out ?= apps/notes/gateway/jwt.pem
 jwt-key:
 	@test ! -e "$(out)" || (echo "$(out) already exists, refusing to overwrite" && exit 1)
 	openssl genpkey -algorithm ed25519 -out "$(out)"
 	chmod 600 "$(out)"
-	@echo "set JWT_PRIVATE_KEY_FILE=$(out) for iam"
+	@echo "set JWT_PRIVATE_KEY_FILE=$(out) for the service that signs the tokens"
 
 # every module in go.work, by import path (./... patterns skip dirs starting with "_")
 MODULES = $(shell go list -m | sed 's|$$|/...|')

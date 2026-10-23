@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"core/apperr"
+	"core/authz"
 	"core/reqctx"
 	"core/uow"
 	"note/internal/model"
-	"sdk/authz"
 )
 
 // fakeRepo stores notes in memory and records writes. Tenant scoping is the real
@@ -199,7 +199,7 @@ func TestGetReturnsPermissions(t *testing.T) {
 	}
 }
 
-// A failure other than a denial (authz service down) fails the list instead of
+// A failure other than a denial (engine error) fails the list instead of
 // silently showing everything as forbidden.
 func TestListFailsWhenPermissionsCantBeDecided(t *testing.T) {
 	// the list check passes, the per-note checks fail
