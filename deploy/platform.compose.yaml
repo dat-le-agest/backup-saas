@@ -21,6 +21,9 @@ x-service: &service
     OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     OTEL_METRIC_EXPORT_INTERVAL: "10000"
     OTEL_RESOURCE_ATTRIBUTES: service.namespace=platform
+    # apps served by the platform, one per apps/<app>: iam and authz give each
+    # its own schema (tenants, memberships, refresh tokens; authorization store)
+    PLATFORM_APPS: notes
 
 services:
   iam:
@@ -31,7 +34,6 @@ services:
       OTEL_SERVICE_NAME: iam
       GIN_PORT: "3001"
       AUTHZ_SERVICE_URL: http://authz:3002 # sync memberships to the authz service
-      IAM_APPS: notes # apps served by the platform (token audiences), one per apps/<app>
       DB_DSN: postgres://iam:iam@postgres:5432/iam?sslmode=disable
 
   # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
@@ -43,6 +45,12 @@ services:
       OTEL_SERVICE_NAME: authz
       GIN_PORT: "3002"
       DB_DSN: postgres://authz:authz@postgres:5432/authz?sslmode=disable
+      # each app's model: the platform module + apps/<app>/authz/*.fga, activated on start when changed
+      AUTHZ_PLATFORM_MODEL: /models/platform
+      AUTHZ_APPS_DIR: /models/apps
+    volumes:
+      - ../platform/authz/model:/models/platform:ro
+      - ../apps:/models/apps:ro
 
   # sign-in, tokens, tenants and members (iam)
   gateway:
