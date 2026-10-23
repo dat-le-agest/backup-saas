@@ -1,9 +1,13 @@
 // Package token issues and verifies the kit's access tokens (JWT, EdDSA/Ed25519).
 //
 // The iam service signs tokens with a private key and publishes the public keys
-// as JWKS; the gateway verifies tokens against that JWKS. Access tokens are short
+// as JWKS; gateways verify tokens against that JWKS. Access tokens are short
 // lived and carry the membership version (mv) so role changes can be detected
 // before expiry (see MembershipVersionKey).
+//
+// Every token is issued for one app: its audience (aud) is the app id. An app
+// gateway accepts only its app's tokens; the platform gateway accepts any app
+// (AnyAudience) and passes the app on.
 package token
 
 import (
@@ -30,6 +34,18 @@ type Claims struct {
 
 func (c *Claims) UserID() string { return c.Subject }
 
+// AppID is the app the token was issued for (its single audience).
+func (c *Claims) AppID() string {
+	if len(c.Audience) != 1 {
+		return ""
+	}
+	return c.Audience[0]
+}
+
+// AnyAudience makes a Verifier accept tokens of every app (the platform
+// gateway); the app is then read from Claims.AppID.
+const AnyAudience = "*"
+
 // MembershipVersionKey is the cache key (Redis) holding the current version of
 // a membership. iam writes it on every change; the gateway compares it with mv.
 func MembershipVersionKey(tenantID, userID string) string {
@@ -47,29 +63,31 @@ func KeyID(pub ed25519.PublicKey) string {
 }
 
 type Signer struct {
-	key      ed25519.PrivateKey
-	kid      string
-	issuer   string
-	audience string
-	ttl      time.Duration
-	now      func() time.Time
+	key    ed25519.PrivateKey
+	kid    string
+	issuer string
+	ttl    time.Duration
+	now    func() time.Time
 }
 
-func NewSigner(key ed25519.PrivateKey, issuer, audience string, ttl time.Duration) *Signer {
+func NewSigner(key ed25519.PrivateKey, issuer string, ttl time.Duration) *Signer {
 	return &Signer{
-		key:      key,
-		kid:      KeyID(key.Public().(ed25519.PublicKey)),
-		issuer:   issuer,
-		audience: audience,
-		ttl:      ttl,
-		now:      time.Now,
+		key:    key,
+		kid:    KeyID(key.Public().(ed25519.PublicKey)),
+		issuer: issuer,
+		ttl:    ttl,
+		now:    time.Now,
 	}
 }
 
-// Sign issues an access token for userID. Pass empty tenantID for a tenant-less token.
-func (s *Signer) Sign(userID, tenantID, role string, membershipVersion int64) (string, time.Time, error) {
+// Sign issues an access token for userID in appID (the audience). Pass empty
+// tenantID for a tenant-less token.
+func (s *Signer) Sign(userID, appID, tenantID, role string, membershipVersion int64) (string, time.Time, error) {
 	if userID == "" {
 		return "", time.Time{}, errors.New("token: empty user id")
+	}
+	if appID == "" || appID == AnyAudience {
+		return "", time.Time{}, errors.New("token: invalid app id")
 	}
 	now := s.now()
 	exp := now.Add(s.ttl)
@@ -81,7 +99,7 @@ func (s *Signer) Sign(userID, tenantID, role string, membershipVersion int64) (s
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   userID,
-			Audience:  jwt.ClaimStrings{s.audience},
+			Audience:  jwt.ClaimStrings{appID},
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),
@@ -114,19 +132,21 @@ type Verifier struct {
 	parser *jwt.Parser
 }
 
+// NewVerifier accepts tokens of issuer for the app audience, or of every app
+// when audience is AnyAudience.
 func NewVerifier(keys KeySource, issuer, audience string) *Verifier {
-	return &Verifier{
-		keys: keys,
-		parser: jwt.NewParser(
-			// only EdDSA: rejects "none" and HS256-with-public-key confusion
-			jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
-			jwt.WithIssuer(issuer),
-			jwt.WithAudience(audience),
-			jwt.WithExpirationRequired(),
-			jwt.WithIssuedAt(),
-			jwt.WithLeeway(30*time.Second),
-		),
+	opts := []jwt.ParserOption{
+		// only EdDSA: rejects "none" and HS256-with-public-key confusion
+		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
+		jwt.WithIssuer(issuer),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithLeeway(30 * time.Second),
 	}
+	if audience != AnyAudience {
+		opts = append(opts, jwt.WithAudience(audience))
+	}
+	return &Verifier{keys: keys, parser: jwt.NewParser(opts...)}
 }
 
 // Verify checks signature and claims. All failures wrap ErrInvalid.
@@ -144,6 +164,9 @@ func (v *Verifier) Verify(raw string) (*Claims, error) {
 	}
 	if claims.Subject == "" {
 		return nil, fmt.Errorf("%w: missing subject", ErrInvalid)
+	}
+	if app := claims.AppID(); app == "" || app == AnyAudience {
+		return nil, fmt.Errorf("%w: a token must have exactly one app audience", ErrInvalid)
 	}
 	if claims.TenantID != "" && (claims.Role == "" || claims.MembershipVersion < 1) {
 		return nil, fmt.Errorf("%w: tenant token without role or membership version", ErrInvalid)

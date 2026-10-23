@@ -4,8 +4,9 @@
 //
 //	iam := gatewaytest.NewIam()
 //	iamURL, jwksURL := gatewaytest.ServeIam(t, iam, iam, log)
-//	auth := gatewaytest.Authenticator(t, jwksURL, gatewaytest.GRPCClient(iamURL, iamv1connect.NewIamServiceClient), nil, log)
-//	tok := iam.Member("u1", "t1", "member", 1)
+//	iamClient := gatewaytest.GRPCClient(iamURL, iamv1connect.NewIamServiceClient)
+//	auth := gatewaytest.Authenticator(t, jwksURL, gatewaytest.App, iamClient, nil, log)
+//	tok := iam.Member("u1", "t1", "member", 1) // a token of gatewaytest.App
 package gatewaytest
 
 import (
@@ -30,10 +31,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Issuer and Audience of the tokens the fake iam signs.
+// Issuer of the tokens the fake iam signs, and the app (audience) Token and
+// Member sign for.
 const (
-	Issuer   = "iam"
-	Audience = "api"
+	Issuer = "iam"
+	App    = "testapp"
 )
 
 // Iam is a fake iam service. Embed it to implement more RPCs:
@@ -56,7 +58,7 @@ func NewIam() *Iam {
 	if err != nil {
 		panic(err)
 	}
-	return &Iam{Signer: token.NewSigner(key, Issuer, Audience, 10*time.Minute), versions: map[string]int64{}}
+	return &Iam{Signer: token.NewSigner(key, Issuer, 10*time.Minute), versions: map[string]int64{}}
 }
 
 // SetVersion sets the current version of a membership (as iam does on a change).
@@ -73,10 +75,15 @@ func (f *Iam) RemoveMembership(tenantID, userID string) {
 	delete(f.versions, tenantID+"/"+userID)
 }
 
-// Token signs an access token without registering the membership.
+// Token signs an access token of App without registering the membership.
 // tenantID "" gives a tenant-less token.
 func (f *Iam) Token(userID, tenantID, role string, version int64) string {
-	access, _, err := f.Signer.Sign(userID, tenantID, role, version)
+	return f.AppToken(App, userID, tenantID, role, version)
+}
+
+// AppToken is Token for another app.
+func (f *Iam) AppToken(appID, userID, tenantID, role string, version int64) string {
+	access, _, err := f.Signer.Sign(userID, appID, tenantID, role, version)
 	if err != nil {
 		panic(err)
 	}
@@ -115,15 +122,16 @@ func ServeIam(t testing.TB, f *Iam, h iamv1connect.IamServiceHandler, l logger.L
 }
 
 // Authenticator builds what a gateway's main builds: a JWT verifier on the
-// JWKS and a membership version lookup (Redis if rdb is set, then iam).
-func Authenticator(t testing.TB, jwksURL string, iam iamv1connect.IamServiceClient, rdb *redis.Client, l logger.Logger) *authn.JWTAuthenticator {
+// JWKS for audience (an app id, or token.AnyAudience) and a membership version
+// lookup (Redis if rdb is set, then iam).
+func Authenticator(t testing.TB, jwksURL, audience string, iam iamv1connect.IamServiceClient, rdb *redis.Client, l logger.Logger) *authn.JWTAuthenticator {
 	t.Helper()
 	jwks := token.NewRemoteJWKS(jwksURL, nil)
 	if err := jwks.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return authn.NewJWTAuthenticator(
-		token.NewVerifier(jwks, Issuer, Audience),
+		token.NewVerifier(jwks, Issuer, audience),
 		authn.NewVersionLookup(rdb, iam, time.Hour, l),
 	)
 }

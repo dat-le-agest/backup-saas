@@ -119,6 +119,7 @@ func ServerMetadataInterceptor() connect.Interceptor {
 	return &metadataInterceptor{
 		server: func(ctx context.Context, h http.Header) context.Context {
 			if id := (reqctx.Identity{
+				AppID:    h.Get(reqctx.HeaderAppID),
 				UserID:   h.Get(reqctx.HeaderUserID),
 				TenantID: h.Get(reqctx.HeaderTenantID),
 				Role:     h.Get(reqctx.HeaderTenantRole),
@@ -139,6 +140,7 @@ func ClientMetadataInterceptor() connect.Interceptor {
 	return &metadataInterceptor{
 		client: func(ctx context.Context, h http.Header) {
 			if id, ok := reqctx.IdentityFrom(ctx); ok {
+				setIfNotEmpty(h, reqctx.HeaderAppID, id.AppID)
 				setIfNotEmpty(h, reqctx.HeaderUserID, id.UserID)
 				setIfNotEmpty(h, reqctx.HeaderTenantID, id.TenantID)
 				setIfNotEmpty(h, reqctx.HeaderTenantRole, id.Role)

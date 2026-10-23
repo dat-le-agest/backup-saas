@@ -8,7 +8,6 @@ import (
 
 	"core/apperr"
 	"core/logger"
-	"core/reqctx"
 	"core/uow"
 	"iam/internal/model"
 	"sdk/token"
@@ -45,40 +44,44 @@ func NewTokenService(store Store, u uow.UnitOfWork, signer AccessTokenSigner, cf
 	}
 }
 
-// DevLogin issues tokens for userID without any credential check, creating a
-// credential-less user if needed. Every real login (password, later OIDC) also
-// ends in s.login(...).
-func (s *TokenService) DevLogin(ctx context.Context, userID, tenantID string) (*model.TokenPair, error) {
+// DevLogin issues tokens of appID for userID without any credential check,
+// creating a credential-less user if needed. Every real login (password, later
+// OIDC) also ends in s.login(...).
+func (s *TokenService) DevLogin(ctx context.Context, userID, appID, tenantID string) (*model.TokenPair, error) {
 	if !s.devLogin {
 		return nil, fmt.Errorf("%w: dev login is disabled", apperr.ErrForbidden)
 	}
 	if err := validateUserID(userID); err != nil {
 		return nil, err
 	}
+	if err := requireApp(ctx, s.store, appID); err != nil {
+		return nil, err
+	}
 	if err := s.store.EnsureUser(ctx, userID); err != nil {
 		return nil, err
 	}
-	return s.login(ctx, userID, tenantID)
+	return s.login(ctx, userID, appID, tenantID)
 }
 
-// SwitchTenant issues tokens scoped to tenantID for the calling user.
+// SwitchTenant issues tokens scoped to tenantID for the calling user, in the
+// app of the caller's token.
 func (s *TokenService) SwitchTenant(ctx context.Context, tenantID string) (*model.TokenPair, error) {
-	id, ok := reqctx.IdentityFrom(ctx)
-	if !ok || id.UserID == "" {
-		return nil, fmt.Errorf("%w: no caller identity", apperr.ErrUnauthenticated)
+	id, err := caller(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if tenantID == "" {
 		return nil, fmt.Errorf("%w: tenant_id is required", apperr.ErrInvalid)
 	}
-	return s.login(ctx, id.UserID, tenantID)
+	return s.login(ctx, id.UserID, id.AppID, tenantID)
 }
 
-// login starts a new refresh token family.
-func (s *TokenService) login(ctx context.Context, userID, tenantID string) (*model.TokenPair, error) {
+// login starts a new refresh token family in appID (a registered app).
+func (s *TokenService) login(ctx context.Context, userID, appID, tenantID string) (*model.TokenPair, error) {
 	var pair *model.TokenPair
 	err := s.uow.Do(ctx, func(ctx context.Context) error {
 		var err error
-		pair, err = s.issue(ctx, userID, tenantID, randomHex(16))
+		pair, err = s.issue(ctx, userID, appID, tenantID, randomHex(16))
 		return err
 	})
 	return pair, err
@@ -116,7 +119,7 @@ func (s *TokenService) Refresh(ctx context.Context, raw string) (*model.TokenPai
 			return s.store.RevokeRefreshTokenFamily(ctx, rt.FamilyID) // committed below
 		}
 
-		pair, err = s.issue(ctx, rt.UserID, rt.TenantID, rt.FamilyID)
+		pair, err = s.issue(ctx, rt.UserID, rt.AppID, rt.TenantID, rt.FamilyID)
 		if errors.Is(err, apperr.ErrNotFound) {
 			// membership removed meanwhile: end this session
 			if rerr := s.store.RevokeRefreshTokenFamily(ctx, rt.FamilyID); rerr != nil {
@@ -167,23 +170,31 @@ func (s *TokenService) MembershipVersion(ctx context.Context, tenantID, userID s
 	return m.Version, nil
 }
 
-// issue signs an access token with the membership's current role and version,
-// and stores a new refresh token in family. tenantID may be empty.
-func (s *TokenService) issue(ctx context.Context, userID, tenantID, family string) (*model.TokenPair, error) {
+// issue signs an access token of appID with the membership's current role and
+// version, and stores a new refresh token in family. tenantID may be empty;
+// otherwise it must be a tenant of appID the user is an active member of.
+func (s *TokenService) issue(ctx context.Context, userID, appID, tenantID, family string) (*model.TokenPair, error) {
 	var (
 		role    string
 		version int64
 	)
 	if tenantID != "" {
+		// not a member, or a tenant of another app: indistinguishable from a missing tenant
+		tenant, err := s.store.GetTenant(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		if tenant.AppID != appID {
+			return nil, apperr.ErrNotFound
+		}
 		m, err := s.store.GetMembership(ctx, tenantID, userID)
 		if err != nil {
-			// not a member: indistinguishable from a missing tenant
 			return nil, err
 		}
 		role, version = m.Role, m.Version
 	}
 
-	access, accessExp, err := s.signer.Sign(userID, tenantID, role, version)
+	access, accessExp, err := s.signer.Sign(userID, appID, tenantID, role, version)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +202,7 @@ func (s *TokenService) issue(ctx context.Context, userID, tenantID, family strin
 	raw, hash := newRefreshToken()
 	refreshExp := s.now().Add(s.refreshTTL)
 	if err := s.store.CreateRefreshToken(ctx, &model.RefreshToken{
-		TokenHash: hash, FamilyID: family, UserID: userID, TenantID: tenantID, ExpiresAt: refreshExp,
+		TokenHash: hash, FamilyID: family, AppID: appID, UserID: userID, TenantID: tenantID, ExpiresAt: refreshExp,
 	}); err != nil {
 		return nil, err
 	}

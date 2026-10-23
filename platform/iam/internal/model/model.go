@@ -4,8 +4,16 @@ import "time"
 
 // The schema lives in migrations/*.sql; gorm tags only describe it.
 
+// App is an application of the platform. Tokens are issued for one app (their
+// audience) and tenants belong to one app.
+type App struct {
+	ID        string `gorm:"primaryKey;size:64"`
+	CreatedAt time.Time
+}
+
 type Tenant struct {
 	ID        string `gorm:"primaryKey;size:64"`
+	AppID     string `gorm:"size:64;not null;index"`
 	Name      string `gorm:"size:255;not null"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -32,12 +40,13 @@ type MyTenant struct {
 }
 
 // RefreshToken stores only a hash of the opaque token handed to the client.
-// Tokens of one login share a FamilyID; each refresh marks the old token used
-// and issues a new one in the same family.
+// Tokens of one login share a FamilyID (and its app); each refresh marks the
+// old token used and issues a new one in the same family.
 type RefreshToken struct {
 	ID        uint      `gorm:"primaryKey"`
 	TokenHash string    `gorm:"size:64;not null;uniqueIndex"`
 	FamilyID  string    `gorm:"size:64;not null;index"`
+	AppID     string    `gorm:"size:64;not null"`
 	UserID    string    `gorm:"size:64;not null;index:idx_refresh_tokens_user_tenant,priority:1"`
 	TenantID  string    `gorm:"size:64;not null;index:idx_refresh_tokens_user_tenant,priority:2"`
 	ExpiresAt time.Time `gorm:"not null"`

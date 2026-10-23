@@ -22,18 +22,20 @@ func NewTenantService(store Store, u uow.UnitOfWork, rel authz.Relationships, ca
 	return &TenantService{store: store, uow: u, rel: rel, cache: cache}
 }
 
-// Create makes a tenant owned by the caller. Needs a logged-in user, not a tenant.
+// Create makes a tenant of the caller's app, owned by the caller. Needs a
+// logged-in user, not a tenant.
 func (s *TenantService) Create(ctx context.Context, name string) (*model.Tenant, error) {
-	userID, err := callerUserID(ctx)
+	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
+	userID := id.UserID
 	name, err = validateTenantName(name)
 	if err != nil {
 		return nil, err
 	}
 
-	tenant := &model.Tenant{ID: newTenantID(), Name: name}
+	tenant := &model.Tenant{ID: newTenantID(), AppID: id.AppID, Name: name}
 	owner := &model.Membership{TenantID: tenant.ID, UserID: userID, Role: authz.RoleOwner, Version: 1}
 
 	err = s.uow.Do(ctx, func(ctx context.Context) error {
@@ -54,12 +56,13 @@ func (s *TenantService) Create(ctx context.Context, name string) (*model.Tenant,
 	return tenant, nil
 }
 
+// ListMine lists the caller's tenants in the app of their token.
 func (s *TenantService) ListMine(ctx context.Context) ([]model.MyTenant, error) {
-	userID, err := callerUserID(ctx)
+	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.ListTenantsForUser(ctx, userID)
+	return s.store.ListTenantsForUser(ctx, id.AppID, id.UserID)
 }
 
 func callerUserID(ctx context.Context) (string, error) {

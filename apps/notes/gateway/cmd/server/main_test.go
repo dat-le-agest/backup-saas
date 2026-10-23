@@ -150,7 +150,8 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		rdb = redis.NewClient(&redis.Options{Addr: s.redis.Addr(), MaxRetries: -1})
 		t.Cleanup(func() { rdb.Close() })
 	}
-	auth := gatewaytest.Authenticator(t, jwksURL, gatewaytest.GRPCClient(iamURL, iamv1connect.NewIamServiceClient), rdb, log)
+	// only tokens of this gateway's app (gatewaytest.App stands for notes)
+	auth := gatewaytest.Authenticator(t, jwksURL, gatewaytest.App, gatewaytest.GRPCClient(iamURL, iamv1connect.NewIamServiceClient), rdb, log)
 
 	c, err := buildContainer(gatewaytest.GRPCClient(notesURL, notev1connect.NewNoteServiceClient))
 	if err != nil {
@@ -178,8 +179,8 @@ func TestNotesThroughGateway(t *testing.T) {
 	if note["id"] != float64(1) || note["title"] != "first" || note["created_by"] != "u1" || note["created_at"] != "2026-01-02T03:04:05Z" {
 		t.Fatalf("create body: %v", res.Body)
 	}
-	// identity from the verified token and the request id reached the upstream
-	if s.notes.lastID != (reqctx.Identity{UserID: "u1", TenantID: "t1", Role: "member"}) || s.notes.lastReq != "trace-abc-123" {
+	// identity (with the app) from the verified token and the request id reached the upstream
+	if s.notes.lastID != (reqctx.Identity{AppID: gatewaytest.App, UserID: "u1", TenantID: "t1", Role: "member"}) || s.notes.lastReq != "trace-abc-123" {
 		t.Fatalf("upstream metadata: %+v %q", s.notes.lastID, s.notes.lastReq)
 	}
 	if res.Header.Get(reqctx.HeaderRequestID) != "trace-abc-123" {
@@ -211,7 +212,10 @@ func TestGatewayErrors(t *testing.T) {
 	tok := s.iam.Member("u1", "t1", "member", 1)
 
 	other, _ := token.GenerateKey()
-	forged, _, _ := token.NewSigner(other, gatewaytest.Issuer, gatewaytest.Audience, time.Minute).Sign("u1", "t1", "owner", 1)
+	forged, _, _ := token.NewSigner(other, gatewaytest.Issuer, time.Minute).Sign("u1", gatewaytest.App, "t1", "owner", 1)
+	// a valid token of another app, for a membership that exists
+	s.iam.SetVersion("t1", "u1", 1)
+	otherApp := s.iam.AppToken("crm", "u1", "t1", "member", 1)
 
 	cases := []struct {
 		name, method, path, body, bearer string
@@ -224,6 +228,7 @@ func TestGatewayErrors(t *testing.T) {
 		{"old dev header", "GET", "/v1/notes", "", "", []string{"Authorization", "Dev u1:t1:owner"}, 401, "unauthenticated", ""},
 		{"garbage token", "GET", "/v1/notes", "", "not.a.jwt", nil, 401, "unauthenticated", ""},
 		{"forged token", "GET", "/v1/notes", "", forged, nil, 401, "unauthenticated", ""},
+		{"token of another app", "GET", "/v1/notes", "", otherApp, nil, 401, "unauthenticated", ""},
 		{"upstream validation", "POST", "/v1/notes", `{"title":" "}`, tok, nil, 400, "invalid_input", "invalid input: title is required"},
 		{"bad json", "POST", "/v1/notes", `{`, tok, nil, 400, "invalid_input", "invalid input: invalid JSON body"},
 		{"bad id", "GET", "/v1/notes/abc", "", tok, nil, 400, "invalid_input", ""},

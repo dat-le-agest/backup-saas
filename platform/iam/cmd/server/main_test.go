@@ -42,6 +42,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// apps registered in every test env; logins use testApp unless a test says otherwise
+const (
+	testApp  = "notes"
+	otherApp = "crm"
+)
+
 type env struct {
 	c        *di.Container
 	db       *gorm.DB
@@ -66,7 +72,7 @@ func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzSer
 	t.Cleanup(func() { rdb.Close() })
 
 	key, _ := token.GenerateKey()
-	signer := token.NewSigner(key, "iam", "api", 10*time.Minute)
+	signer := token.NewSigner(key, "iam", 10*time.Minute)
 
 	c, err := buildContainer(deps{
 		db: db, redis: rdb, signer: signer,
@@ -78,6 +84,10 @@ func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzSer
 		authz:      authzClient,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	// testApp and otherApp, as iam registers its --iam-apps at startup
+	if err := service.RegisterApps(context.Background(), di.MustGet[service.Store](c), []string{testApp, otherApp}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,7 +116,7 @@ func newEnvWith(t *testing.T, devLogin bool, authzClient authzv1connect.AuthzSer
 		c:        c,
 		db:       db,
 		client:   client,
-		verifier: token.NewVerifier(token.NewStaticKeys(key.Public().(ed25519.PublicKey)), "iam", "api"),
+		verifier: token.NewVerifier(token.NewStaticKeys(key.Public().(ed25519.PublicKey)), "iam", token.AnyAudience),
 		redis:    mr,
 		jwksURL:  srv.URL + "/.well-known/jwks.json",
 	}
@@ -120,7 +130,7 @@ func (e *env) as(t *testing.T, access string) context.Context {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	return reqctx.WithIdentity(context.Background(), reqctx.Identity{UserID: c.UserID(), TenantID: c.TenantID, Role: c.Role})
+	return reqctx.WithIdentity(context.Background(), reqctx.Identity{AppID: c.AppID(), UserID: c.UserID(), TenantID: c.TenantID, Role: c.Role})
 }
 
 func (e *env) claims(t *testing.T, access string) *token.Claims {
@@ -144,7 +154,7 @@ func (e *env) cachedVersion(t *testing.T, tenantID, userID string) int64 {
 
 func (e *env) login(t *testing.T, userID, tenantID string) *iamv1.TokenPair {
 	t.Helper()
-	res, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: userID, TenantId: tenantID})
+	res, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: userID, TenantId: tenantID, App: testApp})
 	if err != nil {
 		t.Fatalf("login %s: %v", userID, err)
 	}
@@ -213,11 +223,11 @@ func TestLoginTenantAndSwitch(t *testing.T) {
 	bob := e.login(t, "bob", "")
 	_, err = e.client.SwitchTenant(e.as(t, bob.GetAccessToken()), &iamv1.SwitchTenantRequest{TenantId: tenant.GetId()})
 	expect(t, "bob switch", err, apperr.ErrNotFound)
-	_, err = e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "bob", TenantId: tenant.GetId()})
+	_, err = e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "bob", TenantId: tenant.GetId(), App: testApp})
 	expect(t, "bob login into tenant", err, apperr.ErrNotFound)
 
 	// the published JWKS verifies issued tokens
-	jwksVerifier := token.NewVerifier(token.NewRemoteJWKS(e.jwksURL, nil), "iam", "api")
+	jwksVerifier := token.NewVerifier(token.NewRemoteJWKS(e.jwksURL, nil), "iam", testApp)
 	if _, err := jwksVerifier.Verify(switched.GetTokens().GetAccessToken()); err != nil {
 		t.Fatalf("verify via jwks: %v", err)
 	}
@@ -413,13 +423,13 @@ func TestLogoutAndRemovalEndSessions(t *testing.T) {
 
 func TestDevLoginDisabled(t *testing.T) {
 	e := newEnv(t, false)
-	_, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "alice"})
+	_, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "alice", App: testApp})
 	expect(t, "dev login off", err, apperr.ErrForbidden)
 }
 
 func (e *env) register(t *testing.T, email, pw string) *iamv1.RegisterResponse {
 	t.Helper()
-	res, err := e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: email, Password: pw})
+	res, err := e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: email, Password: pw, App: testApp})
 	if err != nil {
 		t.Fatalf("register %s: %v", email, err)
 	}
@@ -427,7 +437,7 @@ func (e *env) register(t *testing.T, email, pw string) *iamv1.RegisterResponse {
 }
 
 func (e *env) passwordLogin(email, pw, tenantID string) (*iamv1.TokenPair, error) {
-	res, err := e.client.Login(context.Background(), &iamv1.LoginRequest{Email: email, Password: pw, TenantId: tenantID})
+	res, err := e.client.Login(context.Background(), &iamv1.LoginRequest{Email: email, Password: pw, TenantId: tenantID, App: testApp})
 	return res.GetTokens(), err
 }
 
@@ -449,7 +459,7 @@ func TestRegisterAndLogin(t *testing.T) {
 		t.Fatalf("me: %v %v", me, err)
 	}
 
-	_, err = e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: "ALICE@example.com", Password: "another password"})
+	_, err = e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: "ALICE@example.com", Password: "another password", App: testApp})
 	expect(t, "duplicate email", err, apperr.ErrConflict)
 
 	pair, err := e.passwordLogin("alice@EXAMPLE.com", pw, "")
@@ -502,7 +512,7 @@ func TestRegisterValidation(t *testing.T) {
 		"too long":       {"alice@example.com", strings.Repeat("x", 129)},
 	}
 	for name, c := range cases {
-		_, err := e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: c[0], Password: c[1]})
+		_, err := e.client.Register(context.Background(), &iamv1.RegisterRequest{Email: c[0], Password: c[1], App: testApp})
 		expect(t, name, err, apperr.ErrInvalid)
 	}
 }
@@ -702,5 +712,66 @@ func TestMembershipsSyncThroughOutbox(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fake.calls, want) {
 		t.Fatalf("delivered\n %v\nwant\n %v", fake.calls, want)
+	}
+}
+
+// A token is issued for one app, and only reaches tenants of that app.
+func TestAppsIsolateTenants(t *testing.T) {
+	e := newEnv(t, true)
+	ctx := context.Background()
+
+	notesTenant, _ := e.setupTenant(t) // alice, in testApp
+	if c := e.claims(t, e.login(t, "alice", notesTenant).GetAccessToken()); c.AppID() != testApp || c.TenantID != notesTenant {
+		t.Fatalf("claims %+v", c)
+	}
+
+	// alice signs in to the other app: same user, no tenants there yet
+	res, err := e.client.DevLogin(ctx, &iamv1.DevLoginRequest{UserId: "alice", App: otherApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crm := res.GetTokens()
+	if c := e.claims(t, crm.GetAccessToken()); c.AppID() != otherApp || c.UserID() != "alice" {
+		t.Fatalf("other app claims %+v", c)
+	}
+	mine, err := e.client.ListMyTenants(e.as(t, crm.GetAccessToken()), &iamv1.ListMyTenantsRequest{})
+	if err != nil || len(mine.GetTenants()) != 0 {
+		t.Fatalf("other app sees %v %v", mine, err)
+	}
+
+	// a tenant of another app looks missing: switching, or signing in directly into it
+	_, err = e.client.SwitchTenant(e.as(t, crm.GetAccessToken()), &iamv1.SwitchTenantRequest{TenantId: notesTenant})
+	expect(t, "switch across apps", err, apperr.ErrNotFound)
+	_, err = e.client.DevLogin(ctx, &iamv1.DevLoginRequest{UserId: "alice", App: otherApp, TenantId: notesTenant})
+	expect(t, "login across apps", err, apperr.ErrNotFound)
+
+	// a tenant created with the other app's token belongs to it
+	created, err := e.client.CreateTenant(e.as(t, crm.GetAccessToken()), &iamv1.CreateTenantRequest{Name: "Sales"})
+	if err != nil || created.GetTenant().GetAppId() != otherApp {
+		t.Fatalf("create in other app: %v %v", created, err)
+	}
+	mine, _ = e.client.ListMyTenants(e.as(t, e.login(t, "alice", "").GetAccessToken()), &iamv1.ListMyTenantsRequest{})
+	if len(mine.GetTenants()) != 1 || mine.GetTenants()[0].GetTenant().GetId() != notesTenant || mine.GetTenants()[0].GetTenant().GetAppId() != testApp {
+		t.Fatalf("my tenants in %s: %v", testApp, mine)
+	}
+
+	// refresh keeps the app of the family
+	refreshed, err := e.client.RefreshTokens(ctx, &iamv1.RefreshTokensRequest{RefreshToken: crm.GetRefreshToken()})
+	if err != nil || e.claims(t, refreshed.GetTokens().GetAccessToken()).AppID() != otherApp {
+		t.Fatalf("refresh: %v %v", refreshed, err)
+	}
+
+	// the app must be registered
+	for name, app := range map[string]string{"missing": "", "unknown": "nope"} {
+		_, err := e.client.DevLogin(ctx, &iamv1.DevLoginRequest{UserId: "alice", App: app})
+		expect(t, "dev login, "+name+" app", err, apperr.ErrInvalid)
+		_, err = e.client.Register(ctx, &iamv1.RegisterRequest{Email: "new-" + name + "@example.com", Password: "a long password", App: app})
+		expect(t, "register, "+name+" app", err, apperr.ErrInvalid)
+		_, err = e.client.Login(ctx, &iamv1.LoginRequest{Email: "x@example.com", Password: "a long password", App: app})
+		expect(t, "login, "+name+" app", err, apperr.ErrInvalid)
+	}
+	// an invalid app doesn't create the account
+	if _, err := e.client.Login(ctx, &iamv1.LoginRequest{Email: "new-unknown@example.com", Password: "a long password", App: testApp}); !errors.Is(err, apperr.ErrUnauthenticated) {
+		t.Fatalf("account created despite unknown app: %v", err)
 	}
 }

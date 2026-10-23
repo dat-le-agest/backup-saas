@@ -16,7 +16,7 @@ type Authenticator interface {
 }
 
 // Auth rejects requests without a valid identity and stores the identity in the
-// request context. core/rpc forwards it upstream as X-User-Id / X-Tenant-Id;
+// request context. core/rpc forwards it upstream as X-App-Id / X-User-Id / X-Tenant-Id;
 // headers sent by the client itself are never forwarded, so they can't be spoofed.
 func Auth(a Authenticator) gin.HandlerFunc {
 	return func(c *gin.Context) {

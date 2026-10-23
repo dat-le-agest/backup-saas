@@ -37,9 +37,13 @@ func UserFromProto(u *iamv1.User) User {
 	return User{ID: u.GetId(), Email: u.GetEmail(), CreatedAt: u.GetCreateTime().AsTime()}
 }
 
+// App (on register, login and dev login): the app to sign in to, e.g. "notes".
+// The tokens are issued for it and only reach its gateway and its tenants.
+
 type RegisterRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	App      string `json:"app"`
 }
 
 type RegisterResponse struct {
@@ -51,6 +55,7 @@ type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	TenantID string `json:"tenant_id"`
+	App      string `json:"app"`
 }
 
 type ChangePasswordRequest struct {
@@ -61,6 +66,7 @@ type ChangePasswordRequest struct {
 type DevLoginRequest struct {
 	UserID   string `json:"user_id"`
 	TenantID string `json:"tenant_id"`
+	App      string `json:"app"`
 }
 
 type RefreshRequest struct {
@@ -73,12 +79,13 @@ type SwitchTenantRequest struct {
 
 type Tenant struct {
 	ID        string    `json:"id"`
+	AppID     string    `json:"app_id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 func TenantFromProto(t *iamv1.Tenant) Tenant {
-	return Tenant{ID: t.GetId(), Name: t.GetName(), CreatedAt: t.GetCreateTime().AsTime()}
+	return Tenant{ID: t.GetId(), AppID: t.GetAppId(), Name: t.GetName(), CreatedAt: t.GetCreateTime().AsTime()}
 }
 
 type MyTenant struct {

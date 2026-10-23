@@ -13,7 +13,7 @@ info:
     `A-Za-z0-9._-`) to correlate logs; otherwise one is generated.
 
     Sign up with `/v1/auth/register`, sign in with `/v1/auth/login` (email +
-    password). Unauthenticated `/v1/auth/*` endpoints are rate limited per client IP
+    password), naming the `app` to sign in to (e.g. `notes`). Unauthenticated `/v1/auth/*` endpoints are rate limited per client IP
     (`429` with `Retry-After`); after 5 failed logins an email is locked for 15
     minutes (`429`), whether or not it is registered.
 
@@ -55,8 +55,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, password]
+              required: [email, password, app]
               properties:
+                app: { $ref: "#/components/schemas/AppID" }
                 email: { type: string, format: email, maxLength: 254 }
                 password: { type: string, minLength: 10, maxLength: 128, description: Must not be the email }
       responses:
@@ -89,8 +90,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, password]
+              required: [email, password, app]
               properties:
+                app: { $ref: "#/components/schemas/AppID" }
                 email: { type: string, format: email }
                 password: { type: string }
                 tenant_id: { type: string }
@@ -146,8 +148,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [user_id]
+              required: [user_id, app]
               properties:
+                app: { $ref: "#/components/schemas/AppID" }
                 user_id: { type: string, example: alice }
                 tenant_id: { type: string }
       responses:
@@ -341,11 +344,19 @@ components:
       required: [refresh_token]
       properties:
         refresh_token: { type: string }
+    AppID:
+      type: string
+      pattern: "^[a-z][a-z0-9-]{0,62}$"
+      example: notes
+      description: |
+        App to sign in to. Tokens are issued for one app: they are accepted by
+        that app's gateway (and here), and reach only that app's tenants.
     Tenant:
       type: object
       required: [id, name, created_at]
       properties:
         id: { type: string, example: tnt_b4fd66acc0eac487 }
+        app_id: { $ref: "#/components/schemas/AppID" }
         name: { type: string, example: Acme }
         created_at: { type: string, format: date-time }
     User:

@@ -47,7 +47,7 @@ func (a *JWTAuthenticator) Authenticate(r *http.Request) (reqctx.Identity, error
 		return reqctx.Identity{}, errBadToken
 	}
 
-	id := reqctx.Identity{UserID: claims.UserID(), TenantID: claims.TenantID, Role: claims.Role}
+	id := reqctx.Identity{AppID: claims.AppID(), UserID: claims.UserID(), TenantID: claims.TenantID, Role: claims.Role}
 	if claims.TenantID == "" {
 		return id, nil
 	}

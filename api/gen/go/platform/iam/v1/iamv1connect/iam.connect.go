@@ -73,8 +73,8 @@ const (
 
 // IamServiceClient is a client for the platform.iam.v1.IamService service.
 type IamServiceClient interface {
-	// Creates a user with email + password and logs them in (tenant-less tokens).
-	// ALREADY_EXISTS if the email is taken.
+	// Creates a user with email + password and logs them in to app (tenant-less
+	// tokens). ALREADY_EXISTS if the email is taken; INVALID_ARGUMENT for an unknown app.
 	Register(context.Context, *v1.RegisterRequest) (*v1.RegisterResponse, error)
 	// Email + password login. Every failure returns the same UNAUTHENTICATED error,
 	// whether the email exists or not. After 5 failures for an email, RESOURCE_EXHAUSTED
@@ -87,19 +87,20 @@ type IamServiceClient interface {
 	// Issues tokens for any user id without credentials, creating the user if needed.
 	// Only enabled when iam runs with app-env=dev; PERMISSION_DENIED otherwise.
 	DevLogin(context.Context, *v1.DevLoginRequest) (*v1.DevLoginResponse, error)
-	// Issues tokens scoped to tenant_id for the calling user (must be an active member).
+	// Issues tokens scoped to tenant_id for the calling user, in the app of the
+	// caller's token. NOT_FOUND unless the user is an active member of a tenant of that app.
 	SwitchTenant(context.Context, *v1.SwitchTenantRequest) (*v1.SwitchTenantResponse, error)
-	// Exchanges a refresh token for a new pair. Refresh tokens are single-use:
-	// presenting an already used one revokes its whole family (theft detection).
+	// Exchanges a refresh token for a new pair (same app and tenant). Refresh tokens
+	// are single-use: presenting an already used one revokes its whole family (theft detection).
 	RefreshTokens(context.Context, *v1.RefreshTokensRequest) (*v1.RefreshTokensResponse, error)
 	// Revokes the refresh token family (logout).
 	RevokeRefreshToken(context.Context, *v1.RevokeRefreshTokenRequest) (*v1.RevokeRefreshTokenResponse, error)
 	// Current version of a membership, compared by the gateway with the token's mv.
 	// NOT_FOUND if the user is not an active member of the tenant.
 	GetMembershipVersion(context.Context, *v1.GetMembershipVersionRequest) (*v1.GetMembershipVersionResponse, error)
-	// Creates a tenant; the calling user becomes its owner.
+	// Creates a tenant in the app of the caller's token; the calling user becomes its owner.
 	CreateTenant(context.Context, *v1.CreateTenantRequest) (*v1.CreateTenantResponse, error)
-	// Tenants the calling user is an active member of.
+	// Tenants of the caller's app that the calling user is an active member of.
 	ListMyTenants(context.Context, *v1.ListMyTenantsRequest) (*v1.ListMyTenantsResponse, error)
 	// Members of the caller's tenant. Any role may list.
 	ListMembers(context.Context, *v1.ListMembersRequest) (*v1.ListMembersResponse, error)
@@ -373,8 +374,8 @@ func (c *iamServiceClient) RemoveMember(ctx context.Context, req *v1.RemoveMembe
 
 // IamServiceHandler is an implementation of the platform.iam.v1.IamService service.
 type IamServiceHandler interface {
-	// Creates a user with email + password and logs them in (tenant-less tokens).
-	// ALREADY_EXISTS if the email is taken.
+	// Creates a user with email + password and logs them in to app (tenant-less
+	// tokens). ALREADY_EXISTS if the email is taken; INVALID_ARGUMENT for an unknown app.
 	Register(context.Context, *v1.RegisterRequest) (*v1.RegisterResponse, error)
 	// Email + password login. Every failure returns the same UNAUTHENTICATED error,
 	// whether the email exists or not. After 5 failures for an email, RESOURCE_EXHAUSTED
@@ -387,19 +388,20 @@ type IamServiceHandler interface {
 	// Issues tokens for any user id without credentials, creating the user if needed.
 	// Only enabled when iam runs with app-env=dev; PERMISSION_DENIED otherwise.
 	DevLogin(context.Context, *v1.DevLoginRequest) (*v1.DevLoginResponse, error)
-	// Issues tokens scoped to tenant_id for the calling user (must be an active member).
+	// Issues tokens scoped to tenant_id for the calling user, in the app of the
+	// caller's token. NOT_FOUND unless the user is an active member of a tenant of that app.
 	SwitchTenant(context.Context, *v1.SwitchTenantRequest) (*v1.SwitchTenantResponse, error)
-	// Exchanges a refresh token for a new pair. Refresh tokens are single-use:
-	// presenting an already used one revokes its whole family (theft detection).
+	// Exchanges a refresh token for a new pair (same app and tenant). Refresh tokens
+	// are single-use: presenting an already used one revokes its whole family (theft detection).
 	RefreshTokens(context.Context, *v1.RefreshTokensRequest) (*v1.RefreshTokensResponse, error)
 	// Revokes the refresh token family (logout).
 	RevokeRefreshToken(context.Context, *v1.RevokeRefreshTokenRequest) (*v1.RevokeRefreshTokenResponse, error)
 	// Current version of a membership, compared by the gateway with the token's mv.
 	// NOT_FOUND if the user is not an active member of the tenant.
 	GetMembershipVersion(context.Context, *v1.GetMembershipVersionRequest) (*v1.GetMembershipVersionResponse, error)
-	// Creates a tenant; the calling user becomes its owner.
+	// Creates a tenant in the app of the caller's token; the calling user becomes its owner.
 	CreateTenant(context.Context, *v1.CreateTenantRequest) (*v1.CreateTenantResponse, error)
-	// Tenants the calling user is an active member of.
+	// Tenants of the caller's app that the calling user is an active member of.
 	ListMyTenants(context.Context, *v1.ListMyTenantsRequest) (*v1.ListMyTenantsResponse, error)
 	// Members of the caller's tenant. Any role may list.
 	ListMembers(context.Context, *v1.ListMembersRequest) (*v1.ListMembersResponse, error)

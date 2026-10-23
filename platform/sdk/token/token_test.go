@@ -21,14 +21,14 @@ func newSigner(t *testing.T) (*Signer, ed25519.PrivateKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewSigner(key, "iam", "api", 10*time.Minute), key
+	return NewSigner(key, "iam", 10*time.Minute), key
 }
 
 func TestSignVerify(t *testing.T) {
 	s, key := newSigner(t)
-	v := NewVerifier(NewStaticKeys(key.Public().(ed25519.PublicKey)), "iam", "api")
+	v := NewVerifier(NewStaticKeys(key.Public().(ed25519.PublicKey)), "iam", "notes")
 
-	raw, exp, err := s.Sign("u1", "t1", "admin", 3)
+	raw, exp, err := s.Sign("u1", "notes", "t1", "admin", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +39,12 @@ func TestSignVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.UserID() != "u1" || c.TenantID != "t1" || c.Role != "admin" || c.MembershipVersion != 3 {
+	if c.UserID() != "u1" || c.AppID() != "notes" || c.TenantID != "t1" || c.Role != "admin" || c.MembershipVersion != 3 {
 		t.Fatalf("claims %+v", c)
 	}
 
 	// tenant-less token right after login
-	raw, _, _ = s.Sign("u1", "", "", 0)
+	raw, _, _ = s.Sign("u1", "notes", "", "", 0)
 	if c, err := v.Verify(raw); err != nil || c.TenantID != "" {
 		t.Fatalf("tenant-less: %+v %v", c, err)
 	}
@@ -53,17 +53,18 @@ func TestSignVerify(t *testing.T) {
 func TestRejects(t *testing.T) {
 	s, key := newSigner(t)
 	pub := key.Public().(ed25519.PublicKey)
-	v := NewVerifier(NewStaticKeys(pub), "iam", "api")
-	valid, _, _ := s.Sign("u1", "t1", "admin", 1)
+	v := NewVerifier(NewStaticKeys(pub), "iam", "notes")
+	valid, _, _ := s.Sign("u1", "notes", "t1", "admin", 1)
 
 	other, _ := newSigner(t)
-	foreign, _, _ := other.Sign("u1", "t1", "owner", 1)
+	foreign, _, _ := other.Sign("u1", "notes", "t1", "owner", 1)
 
-	expiredSigner := NewSigner(key, "iam", "api", -time.Hour)
-	expired, _, _ := expiredSigner.Sign("u1", "t1", "admin", 1)
+	expiredSigner := NewSigner(key, "iam", -time.Hour)
+	expired, _, _ := expiredSigner.Sign("u1", "notes", "t1", "admin", 1)
 
-	wrongAud, _, _ := NewSigner(key, "iam", "other-api", time.Minute).Sign("u1", "", "", 0)
-	wrongIss, _, _ := NewSigner(key, "evil", "api", time.Minute).Sign("u1", "", "", 0)
+	// a token of another app
+	wrongAud, _, _ := s.Sign("u1", "crm", "", "", 0)
+	wrongIss, _, _ := NewSigner(key, "evil", time.Minute).Sign("u1", "notes", "", "", 0)
 
 	// payload tampering: promote to owner, keep signature
 	parts := strings.Split(valid, ".")
@@ -72,7 +73,7 @@ func TestRejects(t *testing.T) {
 
 	// alg confusion: HS256 signed with the public key bytes as the HMAC secret
 	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{RegisteredClaims: jwt.RegisteredClaims{
-		Issuer: "iam", Subject: "u1", Audience: jwt.ClaimStrings{"api"},
+		Issuer: "iam", Subject: "u1", Audience: jwt.ClaimStrings{"notes"},
 		IssuedAt: jwt.NewNumericDate(time.Now()), ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}})
 	hs.Header["kid"] = KeyID(pub)
@@ -80,14 +81,14 @@ func TestRejects(t *testing.T) {
 
 	// alg none
 	none := jwt.NewWithClaims(jwt.SigningMethodNone, Claims{RegisteredClaims: jwt.RegisteredClaims{
-		Issuer: "iam", Subject: "u1", Audience: jwt.ClaimStrings{"api"},
+		Issuer: "iam", Subject: "u1", Audience: jwt.ClaimStrings{"notes"},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}})
 	none.Header["kid"] = KeyID(pub)
 	noneToken, _ := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
 
 	// tenant token missing mv
-	noMV, _, _ := s.Sign("u1", "t1", "admin", 0)
+	noMV, _, _ := s.Sign("u1", "notes", "t1", "admin", 0)
 
 	cases := map[string]string{
 		"foreign key": foreign, "expired": expired, "wrong audience": wrongAud,
@@ -95,6 +96,39 @@ func TestRejects(t *testing.T) {
 		"alg none": noneToken, "tenant without mv": noMV, "garbage": "a.b.c", "empty": "",
 	}
 	for name, raw := range cases {
+		if _, err := v.Verify(raw); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: expected ErrInvalid, got %v", name, err)
+		}
+	}
+}
+
+// The platform gateway accepts every app's tokens; a token still needs exactly one app.
+func TestAnyAudience(t *testing.T) {
+	s, key := newSigner(t)
+	pub := key.Public().(ed25519.PublicKey)
+	v := NewVerifier(NewStaticKeys(pub), "iam", AnyAudience)
+
+	for _, app := range []string{"notes", "crm"} {
+		raw, _, _ := s.Sign("u1", app, "", "", 0)
+		if c, err := v.Verify(raw); err != nil || c.AppID() != app {
+			t.Fatalf("%s: %+v %v", app, c, err)
+		}
+	}
+
+	if _, _, err := s.Sign("u1", "", "", "", 0); err == nil {
+		t.Fatal("signing without an app must fail")
+	}
+	if _, _, err := s.Sign("u1", AnyAudience, "", "", 0); err == nil {
+		t.Fatal("signing for every app must fail")
+	}
+
+	for name, aud := range map[string]jwt.ClaimStrings{"no app": nil, "two apps": {"notes", "crm"}, "wildcard": {AnyAudience}} {
+		tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, Claims{RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: "iam", Subject: "u1", Audience: aud,
+			IssuedAt: jwt.NewNumericDate(time.Now()), ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		}})
+		tok.Header["kid"] = KeyID(pub)
+		raw, _ := tok.SignedString(key)
 		if _, err := v.Verify(raw); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: expected ErrInvalid, got %v", name, err)
 		}
@@ -116,16 +150,16 @@ func TestRemoteJWKSRotation(t *testing.T) {
 
 	jwks := NewRemoteJWKS(srv.URL, nil)
 	jwks.minRefresh = 0
-	v := NewVerifier(jwks, "iam", "api")
+	v := NewVerifier(jwks, "iam", "notes")
 
-	oldTok, _, _ := oldSigner.Sign("u1", "", "", 0)
+	oldTok, _, _ := oldSigner.Sign("u1", "notes", "", "", 0)
 	if _, err := v.Verify(oldTok); err != nil {
 		t.Fatal(err)
 	}
 
 	// rotation: publish new + old; a token with the new kid triggers a refetch
 	published.Store(NewJWKS(newKey.Public().(ed25519.PublicKey), oldKey.Public().(ed25519.PublicKey)))
-	newTok, _, _ := newSigner_.Sign("u1", "", "", 0)
+	newTok, _, _ := newSigner_.Sign("u1", "notes", "", "", 0)
 	if _, err := v.Verify(newTok); err != nil {
 		t.Fatalf("new key after rotation: %v", err)
 	}

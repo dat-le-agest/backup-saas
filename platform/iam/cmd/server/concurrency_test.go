@@ -144,7 +144,7 @@ func TestConcurrentAddSameMember(t *testing.T) {
 func TestConcurrentDevLoginCreatesUserOnce(t *testing.T) {
 	e := newEnv(t, true)
 	errs := parallel(8, func(int) error {
-		_, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "newcomer"})
+		_, err := e.client.DevLogin(context.Background(), &iamv1.DevLoginRequest{UserId: "newcomer", App: testApp})
 		return err
 	})
 	if n := count(errs, func(err error) bool { return err != nil }); n != 0 {

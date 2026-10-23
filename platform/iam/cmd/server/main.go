@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +38,10 @@ func main() {
 
 // run returns errors instead of exiting so deferred sc.Stop() always executes.
 func run() error {
+	// defined before the service context parses flags (and their env, IAM_APPS)
+	apps := flag.String("iam-apps", "",
+		"comma-separated ids of the apps served by the platform (token audiences), e.g. notes,crm. Required")
+
 	sc := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
@@ -93,6 +99,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	appIDs := strings.FieldsFunc(*apps, func(r rune) bool { return r == ',' || r == ' ' })
+	if err := service.RegisterApps(context.Background(), di.MustGet[service.Store](c), appIDs); err != nil {
+		return err
+	}
+	logger.Infof("apps: %s", strings.Join(appIDs, ", "))
 
 	// delivers outbox messages (membership tuples) after commit
 	relay := di.MustGet[*outbox.Outbox](c).NewRelay(db, sc.Logger("outbox"), outbox.RelayOptions{})

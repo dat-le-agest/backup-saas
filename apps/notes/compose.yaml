@@ -59,6 +59,7 @@ services:
       OTEL_SERVICE_NAME: notes-gateway
       GIN_PORT: "8081"
       JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
+      JWT_AUDIENCE: notes # only tokens issued for this app
       IAM_SERVICE_URL: http://iam:3001
       NOTE_SERVICE_URL: http://note:3000
     ports: ["8081:8081"]

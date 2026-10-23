@@ -15,6 +15,7 @@ import (
 	zaplogger "core/logger/zap"
 	"core/reqctx"
 	"sdk/gatewaytest"
+	"sdk/token"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,18 +37,26 @@ func (f *fakeIam) record(ctx context.Context) {
 	f.lastID, _ = reqctx.IdentityFrom(ctx)
 }
 
-func (f *fakeIam) pair(userID string) *iamv1.TokenPair {
-	access, exp, _ := f.Signer.Sign(userID, "", "", 0)
+// pair signs tenant-less tokens of app; an empty app fails like iam does.
+func (f *fakeIam) pair(app, userID string) (*iamv1.TokenPair, error) {
+	if app == "" {
+		return nil, apperr.Invalid("app", "is required")
+	}
+	access, exp, _ := f.Signer.Sign(userID, app, "", "", 0)
 	return &iamv1.TokenPair{
 		AccessToken: access, AccessTokenExpireTime: timestamppb.New(exp),
 		RefreshToken: "refresh-" + userID, RefreshTokenExpireTime: timestamppb.New(exp.Add(time.Hour)),
-	}
+	}, nil
 }
 
 func (f *fakeIam) Register(_ context.Context, req *iamv1.RegisterRequest) (*iamv1.RegisterResponse, error) {
+	pair, err := f.pair(req.GetApp(), "usr_1")
+	if err != nil {
+		return nil, err
+	}
 	return &iamv1.RegisterResponse{
 		User:   &iamv1.User{Id: "usr_1", Email: req.GetEmail(), CreateTime: timestamppb.Now()},
-		Tokens: f.pair("usr_1"),
+		Tokens: pair,
 	}, nil
 }
 
@@ -55,23 +64,27 @@ func (f *fakeIam) Login(_ context.Context, req *iamv1.LoginRequest) (*iamv1.Logi
 	if req.GetPassword() != "correct horse battery" {
 		return nil, fmt.Errorf("%w: invalid email or password", apperr.ErrUnauthenticated)
 	}
-	return &iamv1.LoginResponse{Tokens: f.pair("usr_1")}, nil
+	pair, err := f.pair(req.GetApp(), "usr_1")
+	return &iamv1.LoginResponse{Tokens: pair}, err
 }
 
 func (f *fakeIam) GetMe(ctx context.Context, _ *iamv1.GetMeRequest) (*iamv1.GetMeResponse, error) {
+	f.record(ctx)
 	id, _ := reqctx.IdentityFrom(ctx)
 	return &iamv1.GetMeResponse{User: &iamv1.User{Id: id.UserID, Email: "alice@example.com", CreateTime: timestamppb.Now()}}, nil
 }
 
 func (f *fakeIam) DevLogin(_ context.Context, req *iamv1.DevLoginRequest) (*iamv1.DevLoginResponse, error) {
-	return &iamv1.DevLoginResponse{Tokens: f.pair(req.GetUserId())}, nil
+	pair, err := f.pair(req.GetApp(), req.GetUserId())
+	return &iamv1.DevLoginResponse{Tokens: pair}, err
 }
 
 func (f *fakeIam) RefreshTokens(_ context.Context, req *iamv1.RefreshTokensRequest) (*iamv1.RefreshTokensResponse, error) {
 	if !strings.HasPrefix(req.GetRefreshToken(), "refresh-") {
 		return nil, fmt.Errorf("%w: invalid or expired refresh token", apperr.ErrUnauthenticated)
 	}
-	return &iamv1.RefreshTokensResponse{Tokens: f.pair(strings.TrimPrefix(req.GetRefreshToken(), "refresh-"))}, nil
+	pair, err := f.pair(gatewaytest.App, strings.TrimPrefix(req.GetRefreshToken(), "refresh-"))
+	return &iamv1.RefreshTokensResponse{Tokens: pair}, err
 }
 
 func (f *fakeIam) RevokeRefreshToken(context.Context, *iamv1.RevokeRefreshTokenRequest) (*iamv1.RevokeRefreshTokenResponse, error) {
@@ -81,7 +94,7 @@ func (f *fakeIam) RevokeRefreshToken(context.Context, *iamv1.RevokeRefreshTokenR
 func (f *fakeIam) ListMyTenants(ctx context.Context, _ *iamv1.ListMyTenantsRequest) (*iamv1.ListMyTenantsResponse, error) {
 	f.record(ctx)
 	return &iamv1.ListMyTenantsResponse{Tenants: []*iamv1.MyTenant{{
-		Tenant: &iamv1.Tenant{Id: "t1", Name: "Acme", CreateTime: timestamppb.Now()}, Role: "owner",
+		Tenant: &iamv1.Tenant{Id: "t1", AppId: gatewaytest.App, Name: "Acme", CreateTime: timestamppb.Now()}, Role: "owner",
 	}}}, nil
 }
 
@@ -127,7 +140,8 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	gin.SetMode(gin.TestMode)
 	s := &stack{gateway: gin.New(), iam: iam}
 	registerRoutes(s.gateway, c, routeOptions{
-		auth: gatewaytest.Authenticator(t, jwksURL, iamClient, nil, log), devLogin: o.devLogin, logger: log,
+		// every app's tokens: the platform gateway serves all apps
+		auth: gatewaytest.Authenticator(t, jwksURL, token.AnyAudience, iamClient, nil, log), devLogin: o.devLogin, logger: log,
 		authRatePerMinute: o.ratePerMinute, authRateBurst: o.rateBurst,
 	})
 	return s
@@ -147,6 +161,7 @@ func TestGatewayErrors(t *testing.T) {
 		{"no auth", "GET", "/v1/me", "", "", 401, "unauthenticated"},
 		{"garbage token", "GET", "/v1/me", "", "not.a.jwt", 401, "unauthenticated"},
 		{"bad json", "POST", "/v1/auth/login", `{`, "", 400, "invalid_input"},
+		{"no app", "POST", "/v1/auth/login", `{"email":"alice@example.com","password":"correct horse battery"}`, "", 400, "invalid_input"},
 		{"unknown route", "GET", "/v2/nothing", "", "", 404, "not_found"},
 		// app routes live on their app gateways
 		{"no app routes here", "GET", "/v1/notes", "", s.iam.Token("u1", "", "", 0), 404, "not_found"},
@@ -170,7 +185,7 @@ func TestGatewayErrors(t *testing.T) {
 func TestAuthAndTenantEndpoints(t *testing.T) {
 	s := newStack(t, stackOptions{devLogin: true})
 
-	res := s.do("POST", "/v1/auth/dev-login", `{"user_id":"alice"}`, "")
+	res := s.do("POST", "/v1/auth/dev-login", `{"user_id":"alice","app":"`+gatewaytest.App+`"}`, "")
 	pair := res.Data()
 	if res.Status != 200 || pair["token_type"] != "Bearer" || pair["access_token"] == "" || pair["refresh_token"] != "refresh-alice" {
 		t.Fatalf("dev login: %d %v", res.Status, res.Body)
@@ -182,7 +197,8 @@ func TestAuthAndTenantEndpoints(t *testing.T) {
 	if list, _ := res.Body["data"].([]any); res.Status != 200 || len(list) != 1 {
 		t.Fatalf("my tenants: %d %v", res.Status, res.Body)
 	}
-	if s.iam.lastID.UserID != "alice" || s.iam.lastID.TenantID != "" || s.iam.VersionCalls.Load() != 0 {
+	// the app of the token reaches iam, which scopes tenants by it
+	if s.iam.lastID.AppID != gatewaytest.App || s.iam.lastID.UserID != "alice" || s.iam.lastID.TenantID != "" || s.iam.VersionCalls.Load() != 0 {
 		t.Fatalf("identity %+v, version calls %d", s.iam.lastID, s.iam.VersionCalls.Load())
 	}
 
@@ -222,7 +238,7 @@ func TestStaleTokenRejectedOnMembers(t *testing.T) {
 func TestPasswordEndpoints(t *testing.T) {
 	s := newStack(t, stackOptions{})
 
-	res := s.do("POST", "/v1/auth/register", `{"email":"alice@example.com","password":"correct horse battery"}`, "")
+	res := s.do("POST", "/v1/auth/register", `{"email":"alice@example.com","password":"correct horse battery","app":"notes"}`, "")
 	reg := res.Data()
 	user, _ := reg["user"].(map[string]any)
 	tokens, _ := reg["tokens"].(map[string]any)
@@ -230,18 +246,18 @@ func TestPasswordEndpoints(t *testing.T) {
 		t.Fatalf("register: %d %v", res.Status, res.Body)
 	}
 
-	res = s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"correct horse battery"}`, "")
+	res = s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"correct horse battery","app":"notes"}`, "")
 	if res.Status != 200 || res.Data()["token_type"] != "Bearer" {
 		t.Fatalf("login: %d %v", res.Status, res.Body)
 	}
 	access := res.Data()["access_token"].(string)
 
-	res = s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"nope"}`, "")
+	res = s.do("POST", "/v1/auth/login", `{"email":"alice@example.com","password":"nope","app":"notes"}`, "")
 	if res.Status != 401 || res.ErrMsg() != "unauthenticated: invalid email or password" {
 		t.Fatalf("bad login: %d %v", res.Status, res.Body)
 	}
 
-	if res := s.do("GET", "/v1/me", "", access); res.Status != 200 || res.Data()["id"] != "usr_1" {
+	if res := s.do("GET", "/v1/me", "", access); res.Status != 200 || res.Data()["id"] != "usr_1" || s.iam.lastID.AppID != "notes" {
 		t.Fatalf("me: %d %v", res.Status, res.Body)
 	}
 	if res := s.do("GET", "/v1/me", "", ""); res.Status != 401 {
@@ -251,7 +267,7 @@ func TestPasswordEndpoints(t *testing.T) {
 
 func TestAuthEndpointsAreRateLimited(t *testing.T) {
 	s := newStack(t, stackOptions{ratePerMinute: 60, rateBurst: 3})
-	body := `{"email":"alice@example.com","password":"guess"}`
+	body := `{"email":"alice@example.com","password":"guess","app":"notes"}`
 
 	for i := 0; i < 3; i++ {
 		if res := s.do("POST", "/v1/auth/login", body, ""); res.Status != 401 {

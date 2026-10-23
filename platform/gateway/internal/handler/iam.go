@@ -56,7 +56,7 @@ func (h *IamHandler) register(c *gin.Context) {
 	if !httpx.BindJSON(c, &body) {
 		return
 	}
-	res, err := h.iam.Register(c.Request.Context(), &iamv1.RegisterRequest{Email: body.Email, Password: body.Password})
+	res, err := h.iam.Register(c.Request.Context(), &iamv1.RegisterRequest{Email: body.Email, Password: body.Password, App: body.App})
 	if err != nil {
 		response.Fail(c, err)
 		return
@@ -73,7 +73,7 @@ func (h *IamHandler) login(c *gin.Context) {
 		return
 	}
 	res, err := h.iam.Login(c.Request.Context(), &iamv1.LoginRequest{
-		Email: body.Email, Password: body.Password, TenantId: body.TenantID,
+		Email: body.Email, Password: body.Password, TenantId: body.TenantID, App: body.App,
 	})
 	if err != nil {
 		response.Fail(c, err)
@@ -111,7 +111,7 @@ func (h *IamHandler) devLogin(c *gin.Context) {
 	if !httpx.BindJSON(c, &body) {
 		return
 	}
-	res, err := h.iam.DevLogin(c.Request.Context(), &iamv1.DevLoginRequest{UserId: body.UserID, TenantId: body.TenantID})
+	res, err := h.iam.DevLogin(c.Request.Context(), &iamv1.DevLoginRequest{UserId: body.UserID, TenantId: body.TenantID, App: body.App})
 	if err != nil {
 		response.Fail(c, err)
 		return

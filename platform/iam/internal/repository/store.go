@@ -40,10 +40,37 @@ func notFound(err error) error {
 	return err
 }
 
+// ---- apps ----
+
+// EnsureApps registers the apps that don't exist yet.
+func (s *store) EnsureApps(ctx context.Context, ids []string) error {
+	apps := make([]model.App, len(ids))
+	for i, id := range ids {
+		apps[i] = model.App{ID: id}
+	}
+	return s.conn(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&apps).Error
+}
+
+func (s *store) GetApp(ctx context.Context, id string) (*model.App, error) {
+	var a model.App
+	if err := s.conn(ctx).Where("id = ?", id).First(&a).Error; err != nil {
+		return nil, notFound(err)
+	}
+	return &a, nil
+}
+
 // ---- tenants ----
 
 func (s *store) CreateTenant(ctx context.Context, t *model.Tenant) error {
 	return s.conn(ctx).Create(t).Error
+}
+
+func (s *store) GetTenant(ctx context.Context, id string) (*model.Tenant, error) {
+	var t model.Tenant
+	if err := s.conn(ctx).Where("id = ?", id).First(&t).Error; err != nil {
+		return nil, notFound(err)
+	}
+	return &t, nil
 }
 
 // LockTenant serializes membership changes of a tenant (e.g. two admins demoting
@@ -60,7 +87,8 @@ func (s *store) LockTenant(ctx context.Context, tenantID string) error {
 	return nil
 }
 
-func (s *store) ListTenantsForUser(ctx context.Context, userID string) ([]model.MyTenant, error) {
+// ListTenantsForUser lists the tenants of appID the user is an active member of.
+func (s *store) ListTenantsForUser(ctx context.Context, appID, userID string) ([]model.MyTenant, error) {
 	var rows []struct {
 		model.Tenant
 		Role string
@@ -69,7 +97,7 @@ func (s *store) ListTenantsForUser(ctx context.Context, userID string) ([]model.
 		Table("tenants").
 		Select("tenants.*, memberships.role").
 		Joins("JOIN memberships ON memberships.tenant_id = tenants.id").
-		Where("memberships.user_id = ? AND memberships.removed_at IS NULL", userID).
+		Where("tenants.app_id = ? AND memberships.user_id = ? AND memberships.removed_at IS NULL", appID, userID).
 		Order("tenants.created_at").
 		Scan(&rows).Error
 	if err != nil {

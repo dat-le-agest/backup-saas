@@ -91,10 +91,12 @@ func (x *TokenPair) GetRefreshTokenExpireTime() *timestamppb.Timestamp {
 }
 
 type Tenant struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	CreateTime    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Id         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name       string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	CreateTime *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	// App the tenant belongs to.
+	AppId         string `protobuf:"bytes,4,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -148,6 +150,13 @@ func (x *Tenant) GetCreateTime() *timestamppb.Timestamp {
 		return x.CreateTime
 	}
 	return nil
+}
+
+func (x *Tenant) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
 }
 
 type Member struct {
@@ -301,7 +310,9 @@ type RegisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Email string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	// 10-128 characters.
-	Password      string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	Password string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	// App to sign in to (token audience), e.g. "notes".
+	App           string `protobuf:"bytes,3,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -346,6 +357,13 @@ func (x *RegisterRequest) GetEmail() string {
 func (x *RegisterRequest) GetPassword() string {
 	if x != nil {
 		return x.Password
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetApp() string {
+	if x != nil {
+		return x.App
 	}
 	return ""
 }
@@ -406,8 +424,10 @@ type LoginRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Email    string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	Password string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
-	// Optional: issue tokens directly scoped to this tenant.
-	TenantId      string `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// Optional: issue tokens directly scoped to this tenant (of app).
+	TenantId string `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// App to sign in to (token audience), e.g. "notes".
+	App           string `protobuf:"bytes,4,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -459,6 +479,13 @@ func (x *LoginRequest) GetPassword() string {
 func (x *LoginRequest) GetTenantId() string {
 	if x != nil {
 		return x.TenantId
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetApp() string {
+	if x != nil {
+		return x.App
 	}
 	return ""
 }
@@ -678,8 +705,10 @@ func (x *GetMeResponse) GetUser() *User {
 type DevLoginRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	UserId string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	// Optional: issue tokens directly scoped to this tenant.
-	TenantId      string `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// Optional: issue tokens directly scoped to this tenant (of app).
+	TenantId string `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// App to sign in to (token audience), e.g. "notes".
+	App           string `protobuf:"bytes,3,opt,name=app,proto3" json:"app,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -724,6 +753,13 @@ func (x *DevLoginRequest) GetUserId() string {
 func (x *DevLoginRequest) GetTenantId() string {
 	if x != nil {
 		return x.TenantId
+	}
+	return ""
+}
+
+func (x *DevLoginRequest) GetApp() string {
+	if x != nil {
+		return x.App
 	}
 	return ""
 }
@@ -1714,12 +1750,13 @@ const file_platform_iam_v1_iam_proto_rawDesc = "" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12S\n" +
 	"\x18access_token_expire_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x15accessTokenExpireTime\x12#\n" +
 	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\x12U\n" +
-	"\x19refresh_token_expire_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x16refreshTokenExpireTime\"i\n" +
+	"\x19refresh_token_expire_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x16refreshTokenExpireTime\"\x80\x01\n" +
 	"\x06Tenant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
 	"\vcreate_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"\xe2\x01\n" +
+	"createTime\x12\x15\n" +
+	"\x06app_id\x18\x04 \x01(\tR\x05appId\"\xe2\x01\n" +
 	"\x06Member\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
@@ -1733,17 +1770,19 @@ const file_platform_iam_v1_iam_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12;\n" +
 	"\vcreate_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"C\n" +
+	"createTime\"U\n" +
 	"\x0fRegisterRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\"q\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x10\n" +
+	"\x03app\x18\x03 \x01(\tR\x03app\"q\n" +
 	"\x10RegisterResponse\x12)\n" +
 	"\x04user\x18\x01 \x01(\v2\x15.platform.iam.v1.UserR\x04user\x122\n" +
-	"\x06tokens\x18\x02 \x01(\v2\x1a.platform.iam.v1.TokenPairR\x06tokens\"]\n" +
+	"\x06tokens\x18\x02 \x01(\v2\x1a.platform.iam.v1.TokenPairR\x06tokens\"o\n" +
 	"\fLoginRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x1b\n" +
-	"\ttenant_id\x18\x03 \x01(\tR\btenantId\"C\n" +
+	"\ttenant_id\x18\x03 \x01(\tR\btenantId\x12\x10\n" +
+	"\x03app\x18\x04 \x01(\tR\x03app\"C\n" +
 	"\rLoginResponse\x122\n" +
 	"\x06tokens\x18\x01 \x01(\v2\x1a.platform.iam.v1.TokenPairR\x06tokens\"e\n" +
 	"\x15ChangePasswordRequest\x12)\n" +
@@ -1752,10 +1791,11 @@ const file_platform_iam_v1_iam_proto_rawDesc = "" +
 	"\x16ChangePasswordResponse\"\x0e\n" +
 	"\fGetMeRequest\":\n" +
 	"\rGetMeResponse\x12)\n" +
-	"\x04user\x18\x01 \x01(\v2\x15.platform.iam.v1.UserR\x04user\"G\n" +
+	"\x04user\x18\x01 \x01(\v2\x15.platform.iam.v1.UserR\x04user\"Y\n" +
 	"\x0fDevLoginRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1b\n" +
-	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"F\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x10\n" +
+	"\x03app\x18\x03 \x01(\tR\x03app\"F\n" +
 	"\x10DevLoginResponse\x122\n" +
 	"\x06tokens\x18\x01 \x01(\v2\x1a.platform.iam.v1.TokenPairR\x06tokens\"2\n" +
 	"\x13SwitchTenantRequest\x12\x1b\n" +

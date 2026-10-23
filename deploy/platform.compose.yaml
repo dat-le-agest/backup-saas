@@ -31,6 +31,7 @@ services:
       OTEL_SERVICE_NAME: iam
       GIN_PORT: "3001"
       AUTHZ_SERVICE_URL: http://authz:3002 # sync memberships to the authz service
+      IAM_APPS: notes # apps served by the platform (token audiences), one per apps/<app>
       DB_DSN: postgres://iam:iam@postgres:5432/iam?sslmode=disable
 
   # centralized authorization (ReBAC): Check / ListObjects / WriteTuples
@@ -55,6 +56,7 @@ services:
       OTEL_SERVICE_NAME: gateway
       GIN_PORT: "8080"
       JWT_JWKS_URL: http://iam:3001/.well-known/jwks.json
+      JWT_AUDIENCE: "*" # tokens of every app
       IAM_SERVICE_URL: http://iam:3001
     ports: ["8080:8080"]
 

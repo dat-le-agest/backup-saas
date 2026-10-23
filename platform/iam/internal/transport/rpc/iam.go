@@ -46,7 +46,7 @@ func (h *IamHandler) Mount(r gin.IRouter) {
 // ---- accounts ----
 
 func (h *IamHandler) Register(ctx context.Context, req *iamv1.RegisterRequest) (*iamv1.RegisterResponse, error) {
-	user, pair, err := h.auth.Register(ctx, req.GetEmail(), req.GetPassword())
+	user, pair, err := h.auth.Register(ctx, req.GetEmail(), req.GetPassword(), req.GetApp())
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (h *IamHandler) Register(ctx context.Context, req *iamv1.RegisterRequest) (
 }
 
 func (h *IamHandler) Login(ctx context.Context, req *iamv1.LoginRequest) (*iamv1.LoginResponse, error) {
-	pair, err := h.auth.Login(ctx, req.GetEmail(), req.GetPassword(), req.GetTenantId())
+	pair, err := h.auth.Login(ctx, req.GetEmail(), req.GetPassword(), req.GetApp(), req.GetTenantId())
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (h *IamHandler) GetMe(ctx context.Context, _ *iamv1.GetMeRequest) (*iamv1.G
 // ---- tokens ----
 
 func (h *IamHandler) DevLogin(ctx context.Context, req *iamv1.DevLoginRequest) (*iamv1.DevLoginResponse, error) {
-	pair, err := h.tokens.DevLogin(ctx, req.GetUserId(), req.GetTenantId())
+	pair, err := h.tokens.DevLogin(ctx, req.GetUserId(), req.GetApp(), req.GetTenantId())
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func toTokenPair(p *model.TokenPair) *iamv1.TokenPair {
 }
 
 func toTenant(t *model.Tenant) *iamv1.Tenant {
-	return &iamv1.Tenant{Id: t.ID, Name: t.Name, CreateTime: timestamppb.New(t.CreatedAt)}
+	return &iamv1.Tenant{Id: t.ID, AppId: t.AppID, Name: t.Name, CreateTime: timestamppb.New(t.CreatedAt)}
 }
 
 func toMember(m *model.MemberView) *iamv1.Member {

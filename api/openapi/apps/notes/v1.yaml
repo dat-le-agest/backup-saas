@@ -10,9 +10,10 @@ info:
     Every response carries an `X-Request-Id` header. Send your own (8-64 chars of
     `A-Za-z0-9._-`) to correlate logs; otherwise one is generated.
 
-    Authentication: `Authorization: Bearer <access_token>` with a token scoped to a
-    tenant, issued by the platform API (api/openapi/platform/v1.yaml: sign in, then
-    `/v1/auth/switch-tenant`). When the caller's membership changes, outstanding
+    Authentication: `Authorization: Bearer <access_token>` with a token of the
+    `notes` app scoped to a tenant, issued by the platform API
+    (api/openapi/platform/v1.yaml: sign in with `"app": "notes"`, then
+    `/v1/auth/switch-tenant`). Tokens of other apps get `401`. When the caller's membership changes, outstanding
     tokens get `401` immediately: refresh them on the platform API.
 
     All tenant resources belong to the caller's tenant. Resources of other tenants
@@ -134,7 +135,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Access token from /v1/auth/* (EdDSA-signed by iam).
+      description: Access token of the notes app from the platform API /v1/auth/* (EdDSA-signed by iam).
   parameters:
     NoteID:
       name: id

@@ -4,15 +4,20 @@ package platform.iam.v1;
 
 import "google/protobuf/timestamp.proto";
 
-// IamService owns tenants, memberships and tokens. Internal only: the gateway
-// exposes the public REST API and verifies access tokens with iam's JWKS
-// (GET /.well-known/jwks.json on the iam service).
+// IamService owns apps, tenants, memberships and tokens. Internal only: the
+// platform gateway exposes the public REST API; every gateway verifies access
+// tokens with iam's JWKS (GET /.well-known/jwks.json on the iam service).
 //
-// Caller identity (user, tenant, role) comes from the X-User-Id / X-Tenant-Id /
-// X-Tenant-Role metadata set by the gateway from a verified access token.
+// Users are global (one account for every app). Every token is issued for one
+// app (its audience, the "app" of the sign-in request) and tenants belong to
+// one app: a token only reaches tenants of its app. Apps are registered from
+// iam's configuration (--apps).
+//
+// Caller identity (app, user, tenant, role) comes from the X-App-Id / X-User-Id /
+// X-Tenant-Id / X-Tenant-Role metadata set by a gateway from a verified access token.
 service IamService {
-  // Creates a user with email + password and logs them in (tenant-less tokens).
-  // ALREADY_EXISTS if the email is taken.
+  // Creates a user with email + password and logs them in to app (tenant-less
+  // tokens). ALREADY_EXISTS if the email is taken; INVALID_ARGUMENT for an unknown app.
   rpc Register(RegisterRequest) returns (RegisterResponse);
 
   // Email + password login. Every failure returns the same UNAUTHENTICATED error,
@@ -30,11 +35,12 @@ service IamService {
   // Only enabled when iam runs with app-env=dev; PERMISSION_DENIED otherwise.
   rpc DevLogin(DevLoginRequest) returns (DevLoginResponse);
 
-  // Issues tokens scoped to tenant_id for the calling user (must be an active member).
+  // Issues tokens scoped to tenant_id for the calling user, in the app of the
+  // caller's token. NOT_FOUND unless the user is an active member of a tenant of that app.
   rpc SwitchTenant(SwitchTenantRequest) returns (SwitchTenantResponse);
 
-  // Exchanges a refresh token for a new pair. Refresh tokens are single-use:
-  // presenting an already used one revokes its whole family (theft detection).
+  // Exchanges a refresh token for a new pair (same app and tenant). Refresh tokens
+  // are single-use: presenting an already used one revokes its whole family (theft detection).
   rpc RefreshTokens(RefreshTokensRequest) returns (RefreshTokensResponse);
 
   // Revokes the refresh token family (logout).
@@ -44,10 +50,10 @@ service IamService {
   // NOT_FOUND if the user is not an active member of the tenant.
   rpc GetMembershipVersion(GetMembershipVersionRequest) returns (GetMembershipVersionResponse);
 
-  // Creates a tenant; the calling user becomes its owner.
+  // Creates a tenant in the app of the caller's token; the calling user becomes its owner.
   rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
 
-  // Tenants the calling user is an active member of.
+  // Tenants of the caller's app that the calling user is an active member of.
   rpc ListMyTenants(ListMyTenantsRequest) returns (ListMyTenantsResponse);
 
   // Members of the caller's tenant. Any role may list.
@@ -76,6 +82,8 @@ message Tenant {
   string id = 1;
   string name = 2;
   google.protobuf.Timestamp create_time = 3;
+  // App the tenant belongs to.
+  string app_id = 4;
 }
 
 message Member {
@@ -100,6 +108,8 @@ message RegisterRequest {
   string email = 1;
   // 10-128 characters.
   string password = 2;
+  // App to sign in to (token audience), e.g. "notes".
+  string app = 3;
 }
 
 message RegisterResponse {
@@ -110,8 +120,10 @@ message RegisterResponse {
 message LoginRequest {
   string email = 1;
   string password = 2;
-  // Optional: issue tokens directly scoped to this tenant.
+  // Optional: issue tokens directly scoped to this tenant (of app).
   string tenant_id = 3;
+  // App to sign in to (token audience), e.g. "notes".
+  string app = 4;
 }
 
 message LoginResponse {
@@ -133,8 +145,10 @@ message GetMeResponse {
 
 message DevLoginRequest {
   string user_id = 1;
-  // Optional: issue tokens directly scoped to this tenant.
+  // Optional: issue tokens directly scoped to this tenant (of app).
   string tenant_id = 2;
+  // App to sign in to (token audience), e.g. "notes".
+  string app = 3;
 }
 
 message DevLoginResponse {

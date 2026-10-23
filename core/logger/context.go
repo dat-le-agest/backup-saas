@@ -9,7 +9,7 @@ import (
 )
 
 // WithContext returns l enriched with what ctx knows about the request:
-// request_id, trace_id/span_id (OpenTelemetry), user_id and tenant_id.
+// request_id, trace_id/span_id (OpenTelemetry), app_id, user_id and tenant_id.
 // Use it for any log line written while handling a request so logs can be
 // correlated with each other and with traces:
 //
@@ -24,6 +24,9 @@ func WithContext(ctx context.Context, l Logger) Logger {
 		fields["span_id"] = sc.SpanID().String()
 	}
 	if id, ok := reqctx.IdentityFrom(ctx); ok {
+		if id.AppID != "" {
+			fields["app_id"] = id.AppID
+		}
 		if id.UserID != "" {
 			fields["user_id"] = id.UserID
 		}

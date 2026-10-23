@@ -46,9 +46,13 @@ func NewAuthService(store Store, u uow.UnitOfWork, hasher PasswordHasher, tokens
 	return &AuthService{store: store, uow: u, metrics: newAuthMetrics(), hasher: hasher, tokens: tokens, logger: l, now: time.Now}
 }
 
-func (s *AuthService) Register(ctx context.Context, email, password string) (*model.User, *model.TokenPair, error) {
+// Register creates a password account and signs it in to appID.
+func (s *AuthService) Register(ctx context.Context, email, password, appID string) (*model.User, *model.TokenPair, error) {
 	email, err := normalizeEmail(email)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := requireApp(ctx, s.store, appID); err != nil {
 		return nil, nil, err
 	}
 	if err := validatePassword("password", password, email); err != nil {
@@ -67,7 +71,7 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*mo
 		return nil, nil, err
 	}
 
-	pair, err := s.tokens.login(ctx, user.ID, "")
+	pair, err := s.tokens.login(ctx, user.ID, appID, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,9 +79,13 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*mo
 	return user, pair, nil
 }
 
-// Login verifies email + password. All failures take the same time and return
-// the same error, whether the email is registered or not.
-func (s *AuthService) Login(ctx context.Context, email, password, tenantID string) (*model.TokenPair, error) {
+// Login verifies email + password and signs in to appID. All credential failures
+// take the same time and return the same error, whether the email is registered or not.
+func (s *AuthService) Login(ctx context.Context, email, password, appID, tenantID string) (*model.TokenPair, error) {
+	// apps are not secret: an unknown app is reported before checking credentials
+	if err := requireApp(ctx, s.store, appID); err != nil {
+		return nil, err
+	}
 	email, err := normalizeEmail(email)
 	if err != nil || password == "" || len([]rune(password)) > maxPasswordRunes {
 		s.hasher.VerifyDummy(ctx, password)
@@ -97,7 +105,7 @@ func (s *AuthService) Login(ctx context.Context, email, password, tenantID strin
 		return nil, err
 	}
 	s.metrics.login(ctx, "success")
-	return s.tokens.login(ctx, user.ID, tenantID)
+	return s.tokens.login(ctx, user.ID, appID, tenantID)
 }
 
 // ChangePassword requires the current password and ends every session of the

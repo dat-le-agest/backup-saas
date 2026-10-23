@@ -1,7 +1,10 @@
 // Package jwtc provides sctx components for access tokens (sdk/token):
 //
-//	iam:     jwtc.NewSigner("jwt")    flags --jwt-private-key-file, --jwt-issuer, --jwt-audience, --jwt-access-ttl
+//	iam:     jwtc.NewSigner("jwt")    flags --jwt-private-key-file, --jwt-issuer, --jwt-access-ttl
 //	gateway: jwtc.NewVerifier("jwt")  flags --jwt-jwks-url, --jwt-issuer, --jwt-audience
+//
+// The audience of a token is the app it was issued for. An app gateway sets
+// --jwt-audience to its app id; the platform gateway sets * (every app).
 package jwtc
 
 import (
@@ -19,7 +22,6 @@ import (
 
 const (
 	defaultIssuer    = "saas-iam"
-	defaultAudience  = "saas-api"
 	defaultAccessTTL = 600
 )
 
@@ -36,7 +38,6 @@ type signerComponent struct {
 	id        string
 	keyFile   string
 	issuer    string
-	audience  string
 	accessTTL int
 
 	logger logger.Logger
@@ -53,7 +54,6 @@ func (s *signerComponent) InitFlags() {
 	flag.StringVar(&s.keyFile, "jwt-private-key-file", "",
 		"PEM file with the Ed25519 signing key (openssl genpkey -algorithm ed25519). Required outside dev")
 	flag.StringVar(&s.issuer, "jwt-issuer", defaultIssuer, "iss claim - Default "+defaultIssuer)
-	flag.StringVar(&s.audience, "jwt-audience", defaultAudience, "aud claim - Default "+defaultAudience)
 	flag.IntVar(&s.accessTTL, "jwt-access-ttl", defaultAccessTTL, "access token lifetime in seconds - Default 600")
 }
 
@@ -73,20 +73,20 @@ func (s *signerComponent) Activate(sc sctx.ServiceContext) error {
 		if err != nil {
 			return err
 		}
-		s.signer = token.NewSigner(k, s.issuer, s.audience, time.Duration(s.accessTTL)*time.Second)
+		s.signer = token.NewSigner(k, s.issuer, time.Duration(s.accessTTL)*time.Second)
 	case sc.EnvName() == sctx.DevEnv:
 		k, err := token.GenerateKey()
 		if err != nil {
 			return err
 		}
 		s.logger.Warn("no jwt-private-key-file: using an ephemeral key, tokens become invalid on restart (dev only)")
-		s.signer = token.NewSigner(k, s.issuer, s.audience, time.Duration(s.accessTTL)*time.Second)
+		s.signer = token.NewSigner(k, s.issuer, time.Duration(s.accessTTL)*time.Second)
 	default:
 		return fmt.Errorf("jwt-private-key-file is required for app-env=%s", sc.EnvName())
 	}
 
-	s.logger.Infof("jwt signer ready (kid=%s, iss=%s, aud=%s, ttl=%ds)",
-		s.signer.PublicKeys().Keys[0].Kid, s.issuer, s.audience, s.accessTTL)
+	s.logger.Infof("jwt signer ready (kid=%s, iss=%s, ttl=%ds)",
+		s.signer.PublicKeys().Keys[0].Kid, s.issuer, s.accessTTL)
 	return nil
 }
 
@@ -116,12 +116,16 @@ func (v *verifierComponent) InitFlags() {
 	flag.StringVar(&v.jwksURL, "jwt-jwks-url", "",
 		"JWKS URL of the token issuer, e.g. http://iam:3000/.well-known/jwks.json")
 	flag.StringVar(&v.issuer, "jwt-issuer", defaultIssuer, "expected iss claim - Default "+defaultIssuer)
-	flag.StringVar(&v.audience, "jwt-audience", defaultAudience, "expected aud claim - Default "+defaultAudience)
+	flag.StringVar(&v.audience, "jwt-audience", "",
+		"accepted aud claim: the app id of this gateway, or * for every app (platform gateway). Required")
 }
 
 func (v *verifierComponent) Activate(sc sctx.ServiceContext) error {
 	v.logger = sc.Logger(v.id)
 
+	if v.audience == "" {
+		return errors.New("jwt-audience is required: the app id of this gateway, or * (platform gateway)")
+	}
 	u, err := url.Parse(v.jwksURL)
 	if v.jwksURL == "" || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("invalid jwt-jwks-url %q", v.jwksURL)
