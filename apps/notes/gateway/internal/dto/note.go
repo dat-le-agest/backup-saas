@@ -27,20 +27,22 @@ type NotePermissions struct {
 	CanDelete bool `json:"can_delete"`
 }
 
+// Request DTOs are validated by their validate tags (httpx.BindJSON/BindQuery);
+// the note service checks the business rules again (e.g. a blank title).
 type CreateNoteRequest struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Title   string `json:"title" validate:"required,max=255"`
+	Content string `json:"content" validate:"max=100000"`
 }
 
 // UpdateNoteRequest: omitted fields are left unchanged.
 type UpdateNoteRequest struct {
-	Title   *string `json:"title"`
-	Content *string `json:"content"`
+	Title   *string `json:"title" validate:"omitempty,min=1,max=255"`
+	Content *string `json:"content" validate:"omitempty,max=100000"`
 }
 
 type ListNotesQuery struct {
-	Page  int32 `form:"page"`
-	Limit int32 `form:"limit"`
+	Page  int32 `form:"page" validate:"omitempty,min=1"`
+	Limit int32 `form:"limit" validate:"omitempty,min=1,max=100"`
 }
 
 type Paging struct {

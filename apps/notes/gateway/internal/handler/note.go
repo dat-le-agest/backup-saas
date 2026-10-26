@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -51,8 +50,7 @@ func (h *NoteHandler) create(c *gin.Context) {
 
 func (h *NoteHandler) list(c *gin.Context) {
 	var query dto.ListNotesQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
-		response.Fail(c, fmt.Errorf("%w: page and limit must be integers", apperr.ErrInvalid))
+	if !httpx.BindQuery(c, &query) {
 		return
 	}
 
