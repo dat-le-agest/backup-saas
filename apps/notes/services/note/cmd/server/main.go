@@ -35,7 +35,7 @@ func run() error {
 	adminKey := flag.String("admin-api-key", "",
 		"key of the engine's admin API (/admin/v1/authz, reached through the gateway's admin API); empty disables it")
 
-	sc := sctx.NewServiceContext(
+	sc, err := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
@@ -44,6 +44,10 @@ func run() error {
 		// registered after db so it is stopped first: drain HTTP, then close db
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
+
+	if err != nil {
+		return err
+	}
 
 	// Load rolls back already-activated components on failure
 	if err := sc.Load(); err != nil {

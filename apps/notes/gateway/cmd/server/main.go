@@ -9,8 +9,8 @@ import (
 	"syscall"
 
 	"core/authn"
-	"core/authz/rebac"
 	authnmigrations "core/authn/migrations"
+	"core/authz/rebac"
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/jwtc"
@@ -36,7 +36,7 @@ func run() error {
 	adminKey := flag.String("admin-api-key", "",
 		"key the admin service sends to the admin API (internal admin port); empty disables the admin API")
 
-	sc := sctx.NewServiceContext(
+	sc, err := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
@@ -49,6 +49,10 @@ func run() error {
 		sctx.WithComponent(ginc.NewGin(config.ComponentAdminGin, ginc.WithFlagPrefix(config.AdminFlagPrefix))),
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
+
+	if err != nil {
+		return err
+	}
 
 	if err := sc.Load(); err != nil {
 		return err

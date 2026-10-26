@@ -47,7 +47,7 @@ func run() error {
 	secureCookie := flag.Bool("admin-secure-cookie", false, "set Secure on the session cookie (serve over HTTPS)")
 	grafanaURL := flag.String("grafana-url", "", "Grafana base URL for per-app dashboard links, e.g. http://localhost:3030")
 
-	sc := sctx.NewServiceContext(
+	sc, err := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
@@ -57,6 +57,11 @@ func run() error {
 		// registered last so it is stopped first: stop taking requests, then close the rest
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
+
+	if err != nil {
+		return err
+	}
+
 	if err := sc.Load(); err != nil {
 		return err
 	}

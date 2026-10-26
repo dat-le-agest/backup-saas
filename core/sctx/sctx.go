@@ -1,14 +1,14 @@
 package sctx
 
 import (
-	"core/logger"
-	zaplogger "core/logger/zap"
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+
+	"core/logger"
+	zaplogger "core/logger/zap"
 
 	"github.com/joho/godotenv"
 )
@@ -36,7 +36,6 @@ type ServiceContext interface {
 	EnvName() string
 	GetName() string
 	Get(id string) (interface{}, bool)
-	MustGet(id string) interface{}
 
 	OutEnv()
 }
@@ -61,14 +60,17 @@ func WithName(name string) Option {
 
 func WithComponent(c Component) Option {
 	return func(s *serviceCtx) {
-		if _, ok := s.store[c.ID()]; !ok {
-			s.components = append(s.components, c)
-			s.store[c.ID()] = c
+		if _, exists := s.store[c.ID()]; exists {
+			return
 		}
+
+		s.components = append(s.components, c)
+		s.store[c.ID()] = c
 	}
 }
 
-func NewServiceContext(opts ...Option) ServiceContext {
+// NewServiceContext creates a service context and parses configuration flags.
+func NewServiceContext(opts ...Option) (ServiceContext, error) {
 	s := &serviceCtx{
 		store: make(map[string]Component),
 	}
@@ -78,14 +80,23 @@ func NewServiceContext(opts ...Option) ServiceContext {
 	}
 
 	s.initFlags()
-	s.parseFlags()
+	if err := s.parseFlags(); err != nil {
+		return nil, err
+	}
 
-	return s
+	return s, nil
 }
 
 func (s *serviceCtx) initFlags() {
-	flag.StringVar(&s.env, "app-env", DevEnv, "Env for service: dev | stg | prd")
+	flag.StringVar(
+		&s.env,
+		"app-env",
+		DevEnv,
+		"Env for service: dev | stg | prd",
+	)
+
 	defaultLogger.InitFlags()
+
 	for _, c := range s.components {
 		c.InitFlags()
 	}
@@ -93,20 +104,24 @@ func (s *serviceCtx) initFlags() {
 
 func (s *serviceCtx) Load() error {
 	if defaultLogger.GetLevel() == "" {
+		level := "info"
+
 		switch s.env {
 		case DevEnv:
-			_ = defaultLogger.SetLevel("debug")
+			level = "debug"
 		case StgEnv:
-			_ = defaultLogger.SetLevel("info")
+			level = "info"
 		case PrdEnv:
-			_ = defaultLogger.SetLevel("warn")
-		default:
-			_ = defaultLogger.SetLevel("info")
+			level = "warn"
+		}
+
+		if err := defaultLogger.SetLevel(level); err != nil {
+			return fmt.Errorf("set log level: %w", err)
 		}
 	}
 
 	if err := defaultLogger.Activate(); err != nil {
-		return err
+		return fmt.Errorf("activate logger: %w", err)
 	}
 
 	s.logger = s.Logger("service-context")
@@ -118,32 +133,53 @@ func (s *serviceCtx) Load() error {
 
 	for i, c := range s.components {
 		s.logger.Infof("activating component: %s", c.ID())
+
 		if err := c.Activate(s); err != nil {
 			activateErr := fmt.Errorf("activate %s: %w", c.ID(), err)
-			// rollback components that were already activated
-			return errors.Join(activateErr, s.stopComponents(s.components[:i]))
+
+			rollbackErr := s.stopComponents(s.components[:i])
+
+			_ = defaultLogger.Stop()
+			s.logger = nil
+
+			return errors.Join(activateErr, rollbackErr)
 		}
 	}
+
 	return nil
 }
 
 func (s *serviceCtx) Stop() error {
-	s.logger.Info("stopping service context")
+	if s.logger != nil {
+		s.logger.Info("stopping service context")
+	}
+
 	err := s.stopComponents(s.components)
-	_ = defaultLogger.Stop()
+
+	if stopErr := defaultLogger.Stop(); stopErr != nil {
+		err = errors.Join(err, stopErr)
+	}
+
+	s.logger = nil
+
 	return err
 }
 
-// stopComponents stops in reverse activation order and keeps going on error.
 func (s *serviceCtx) stopComponents(components []Component) error {
 	var errs []error
+
 	for i := len(components) - 1; i >= 0; i-- {
 		c := components[i]
-		s.logger.Infof("stopping component: %s", c.ID())
+
+		if s.logger != nil {
+			s.logger.Infof("stopping component: %s", c.ID())
+		}
+
 		if err := c.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("stop %s: %w", c.ID(), err))
 		}
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -151,46 +187,46 @@ func (s *serviceCtx) Logger(prefix string) logger.Logger {
 	return defaultLogger.GetLogger(prefix)
 }
 
+func (s *serviceCtx) LogLevel() string {
+	return defaultLogger.GetLevel()
+}
+
 func (s *serviceCtx) Get(id string) (interface{}, bool) {
 	c, ok := s.store[id]
 	return c, ok
 }
 
-func (s *serviceCtx) MustGet(id string) interface{} {
-	c, ok := s.Get(id)
-	if !ok {
-		panic(fmt.Sprintf("cannot get component %s", id))
-	}
-	return c
-}
-
-// GetAs returns component id cast to T (usually an interface exported by the component package).
 func GetAs[T any](s ServiceContext, id string) (T, bool) {
 	var zero T
+
 	c, ok := s.Get(id)
 	if !ok {
 		return zero, false
 	}
+
 	v, ok := c.(T)
 	return v, ok
 }
 
+// warning: this function will cause panic if component doesn't exists
 func MustGetAs[T any](s ServiceContext, id string) T {
 	v, ok := GetAs[T](s, id)
 	if !ok {
 		panic(fmt.Sprintf("component %s not found or has wrong type", id))
 	}
+
 	return v
 }
 
-func (s *serviceCtx) LogLevel() string {
-	return defaultLogger.GetLevel()
+func (s *serviceCtx) EnvName() string {
+	return s.env
 }
 
-func (s *serviceCtx) EnvName() string { return s.env }
-func (s *serviceCtx) GetName() string { return s.name }
+func (s *serviceCtx) GetName() string {
+	return s.name
+}
 
-func (s *serviceCtx) parseFlags() {
+func (s *serviceCtx) parseFlags() error {
 	envFile := os.Getenv("ENV_FILE")
 	if envFile == "" {
 		envFile = ".env"
@@ -198,19 +234,43 @@ func (s *serviceCtx) parseFlags() {
 
 	if _, err := os.Stat(envFile); err == nil {
 		if err := godotenv.Load(envFile); err != nil {
-			log.Fatalf("load env file %s: %v", envFile, err)
+			return fmt.Errorf("load env file %s: %w", envFile, err)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check env file %s: %w", envFile, err)
 	}
 
-	// parse flag to env format
+	var parseErr error
+
 	flag.VisitAll(func(f *flag.Flag) {
+		if parseErr != nil {
+			return
+		}
+
 		envKey := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
-		if v := os.Getenv(envKey); v != "" {
-			flag.Set(f.Name, v)
+
+		value, exists := os.LookupEnv(envKey)
+		if !exists {
+			return
+		}
+
+		if err := flag.Set(f.Name, value); err != nil {
+			parseErr = fmt.Errorf(
+				"set flag %s from environment variable %s: %w",
+				f.Name,
+				envKey,
+				err,
+			)
 		}
 	})
 
+	if parseErr != nil {
+		return parseErr
+	}
+
 	flag.Parse()
+
+	return nil
 }
 
 func (s *serviceCtx) OutEnv() {
