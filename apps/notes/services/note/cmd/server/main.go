@@ -14,6 +14,7 @@ import (
 	"core/components/gormc"
 	"core/components/otelc"
 	"core/di"
+	"core/outbox"
 	"core/sctx"
 	modelauthz "note/authz"
 	"note/config"
@@ -106,6 +107,8 @@ func run() error {
 	di.MustGet[*grpctransport.NoteHandler](c).Mount(router)
 	// the engine's admin API (model, tuples, checks), for the admin dashboard
 	rebac.NewAdminHandler(engine, *adminKey).RegisterRoutes(router)
+	// transactional outbox admin API (messages, stats, retry), for the admin dashboard
+	outbox.NewAdminHandler(db, *adminKey).RegisterRoutes(router)
 
 	if err := server.Run(); err != nil {
 		return err

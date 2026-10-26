@@ -200,7 +200,11 @@ func (h *Handler) getApp(c *gin.Context) {
 // paths of an app's admin API the dashboard may call (core/authn/httpapi.AdminHandler)
 var proxyPaths = regexp.MustCompile(`^/(stats|users|users/[^/]+(/(disabled|password))?|tenants|tenants/[^/]+(/members/[^/]+)?` +
 	// the app's authorization engines (core/authz/rebac AdminProxy)
-	`|authz|authz/[^/]+/(models|models/[^/]+(/activate)?|tuples|check|list-objects|changes))$`)
+	`|authz|authz/[^/]+/(models|models/[^/]+(/activate)?|tuples|check|list-objects|changes)` +
+	`|openapi` +
+	// transactional outbox (core/outbox AdminProxy)
+	`|outbox|outbox/[^/]+/(stats|messages|messages/[^/]+/retry|retry-all)` +
+	`)$`)
 
 // proxy forwards /api/apps/:app/admin/<path> to the app's /admin/v1/<path>
 // with the app's admin key, which never reaches the browser.

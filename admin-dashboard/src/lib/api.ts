@@ -136,6 +136,49 @@ export const api = {
     send<{ objects: string[] }>("POST", `/api/apps/${app}/admin/authz/${svc}/list-objects`, body),
   changes: (app: string, svc: string, f: { tenant_id?: string; object_type?: string }, before: number) =>
     request<{ data: Change[]; paging: { next: number } }>("GET", `/api/apps/${app}/admin/authz/${svc}/changes?${qs({ ...f, before_seq: before || undefined, limit: 50 })}`),
+
+  openapi: async (app: string): Promise<string> => {
+    const res = await fetch(`/api/apps/${enc(app)}/admin/openapi`, { credentials: "same-origin" });
+    if (!res.ok) {
+      throw new Error(`Failed to load OpenAPI spec: ${res.statusText}`);
+    }
+    return res.text();
+  },
+
+  // ---- outbox / events ----
+  outboxServices: (app: string) => get<string[]>(`/api/apps/${enc(app)}/admin/outbox`),
+  outboxStats: (app: string, svc: string) => get<OutboxStats>(`/api/apps/${enc(app)}/admin/outbox/${enc(svc)}/stats`),
+  outboxMessages: (app: string, svc: string, status: string, page: number) =>
+    request<List<OutboxMessage>>(
+      "GET",
+      `/api/apps/${enc(app)}/admin/outbox/${enc(svc)}/messages?${qs({ status: status === "all" ? undefined : status, page, limit: 20 })}`,
+    ),
+  retryOutbox: (app: string, svc: string, id: number) =>
+    request<void>("POST", `/api/apps/${enc(app)}/admin/outbox/${enc(svc)}/messages/${id}/retry`),
+  retryAllOutbox: (app: string, svc: string) =>
+    request<{ retried: number }>("POST", `/api/apps/${enc(app)}/admin/outbox/${enc(svc)}/retry-all`),
+};
+
+export type OutboxMessage = {
+  id: number;
+  topic: string;
+  key: string;
+  payload: string;
+  headers: string;
+  attempts: number;
+  next_attempt_at: string;
+  last_error: string;
+  created_at: string;
+  processed_at?: string;
+  failed_at?: string;
+  status: "pending" | "failed" | "processed";
+};
+
+export type OutboxStats = {
+  total: number;
+  pending: number;
+  processed: number;
+  failed: number;
 };
 
 export function errorMessage(error: unknown): string {

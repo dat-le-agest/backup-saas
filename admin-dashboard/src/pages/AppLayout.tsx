@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Building2Icon, ChevronRightIcon, GaugeIcon, KeyRoundIcon, UsersIcon } from "lucide-react";
+import { Building2Icon, ChevronRightIcon, FileCode2Icon, GaugeIcon, KeyRoundIcon, RadioIcon, UsersIcon } from "lucide-react";
 import { Link, Outlet } from "react-router";
 import { ErrorAlert } from "@/components/common";
 import { StatusDot } from "@/components/layout";
@@ -39,6 +39,8 @@ export default function AppLayout() {
           { to: `/apps/${app}/users`, label: <><UsersIcon /> Users</> },
           { to: `/apps/${app}/tenants`, label: <><Building2Icon /> Tenants</> },
           { to: `/apps/${app}/authz`, label: <><KeyRoundIcon /> Authorization</> },
+          { to: `/apps/${app}/outbox`, label: <><RadioIcon /> Outbox Events</> },
+          { to: `/apps/${app}/docs`, label: <><FileCode2Icon /> API Docs</> },
         ]}
       />
       <Outlet />

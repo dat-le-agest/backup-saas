@@ -5,6 +5,8 @@ import { SessionProvider, useMe } from "@/lib/session";
 import Admins from "@/pages/Admins";
 import AppLayout from "@/pages/AppLayout";
 import AppOverview from "@/pages/AppOverview";
+import ApiDocs from "@/pages/ApiDocs";
+import Outbox from "@/pages/Outbox";
 import Login from "@/pages/Login";
 import Overview from "@/pages/Overview";
 import Tenants from "@/pages/Tenants";
@@ -46,6 +48,8 @@ export default function App() {
             <Route index element={<AppOverview />} />
             <Route path="users" element={<Users />} />
             <Route path="tenants" element={<Tenants />} />
+            <Route path="outbox" element={<Outbox />} />
+            <Route path="docs" element={<ApiDocs />} />
             <Route path="authz" element={<AuthzIndex />} />
             <Route path="authz/:svc" element={<AuthzLayout />}>
               <Route index element={<Navigate to="model" replace />} />

@@ -17,6 +17,8 @@ import (
 	"core/components/otelc"
 	"core/components/redisc"
 	"core/components/rpcc"
+	"core/infra"
+	"core/outbox"
 	"core/sctx"
 	"notes-gateway/config"
 	"notes-gateway/internal/client"
@@ -109,7 +111,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	registerAdminRoutes(admin.GetRouter(), auth, authzAdmin, sc.Logger("admin-http"))
+	// the services' outbox engines, through this admin API: /admin/v1/outbox/<service>/*
+	outboxAdmin, err := outbox.NewAdminProxy(*adminKey, map[string]string{"note": noteClient.BaseURL()},
+		otelhttp.NewTransport(http.DefaultTransport), sc.Logger("outbox-admin"))
+	if err != nil {
+		return err
+	}
+	rdb := sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client()
+	infraProbe := infra.NewProbe(dbc.GetDB(), rdb, *adminKey)
+	registerAdminRoutes(admin.GetRouter(), auth, authzAdmin, outboxAdmin, infraProbe, *adminKey, sc.Logger("admin-http"))
 
 	if err := admin.Run(); err != nil {
 		return err

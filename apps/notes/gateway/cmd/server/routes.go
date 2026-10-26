@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"net/http"
 
+	"api/openapi"
 	"core/apperr"
 	"core/authn"
 	"core/authz/rebac"
 	"core/di"
 	"core/httpx"
+	"core/infra"
 	"core/logger"
+	"core/outbox"
 	"core/response"
 	"notes-gateway/config"
 	"notes-gateway/internal/handler"
@@ -65,14 +68,27 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 
 // registerAdminRoutes: the internal admin server (never published), for the
 // platform's admin service: /admin/v1/* behind the app's admin key, with the
-// services' authorization engines under /admin/v1/authz.
-func registerAdminRoutes(r *gin.Engine, auth *authn.Module, authzAdmin *rebac.AdminProxy, l logger.Logger) {
+// services' authorization engines under /admin/v1/authz and outbox under /admin/v1/outbox.
+func registerAdminRoutes(r *gin.Engine, auth *authn.Module, authzAdmin *rebac.AdminProxy, outboxAdmin *outbox.AdminProxy, infraProbe *infra.Probe, adminKey string, l logger.Logger) {
 	r.Use(httpx.RequestID(), httpx.AccessLog(l))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	auth.AdminHTTP.RegisterRoutes(r)
 	authzAdmin.RegisterRoutes(r)
+	outboxAdmin.RegisterRoutes(r)
+	infraProbe.RegisterRoutes(r)
+
+	adminV1 := r.Group("/admin/v1", httpx.AdminKey(adminKey))
+	adminV1.GET("/openapi", func(c *gin.Context) {
+		data, err := openapi.FS.ReadFile("apps/notes/v1.yaml")
+		if err != nil {
+			response.Fail(c, fmt.Errorf("%w: openapi spec not found", apperr.ErrNotFound))
+			return
+		}
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", data)
+	})
+
 	r.NoRoute(notFound)
 }
 

@@ -19,7 +19,9 @@ import (
 	"core/authn/password"
 	"core/authz/rebac"
 	"core/httpx/httpxtest"
+	"core/infra"
 	zaplogger "core/logger/zap"
+	"core/outbox"
 	"core/reqctx"
 	"core/rpc"
 	"core/testdb"
@@ -181,7 +183,12 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registerAdminRoutes(s.admin, auth, authzAdmin, log)
+	outboxAdmin, err := outbox.NewAdminProxy(adminKey, map[string]string{"note": "http://127.0.0.1:1"}, http.DefaultTransport, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infraProbe := infra.NewProbe(testdb.New(t, authnmigrations.FS), rdb, adminKey)
+	registerAdminRoutes(s.admin, auth, authzAdmin, outboxAdmin, infraProbe, adminKey, log)
 	return s
 }
 
@@ -546,5 +553,29 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if res := s.adminDo("GET", "/admin/v1/authz/nope/models", ""); res.Status != 404 {
 		t.Fatalf("authz of an unknown service: %d", res.Status)
+	}
+
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/openapi", "", ""); res.Status != 401 {
+		t.Fatalf("openapi without key: %d", res.Status)
+	}
+	res = s.adminDo("GET", "/admin/v1/openapi", "")
+	if res.Status != 200 || !strings.Contains(res.Header.Get("Content-Type"), "yaml") {
+		t.Fatalf("openapi spec: %d %v", res.Status, res.Header)
+	}
+
+	// the services' outbox engines
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/outbox", "", ""); res.Status != 401 {
+		t.Fatalf("outbox without key: %d", res.Status)
+	}
+	if res := s.adminDo("GET", "/admin/v1/outbox", ""); res.Status != 200 || fmt.Sprint(res.Body["data"]) != "[note]" {
+		t.Fatalf("outbox services: %d %v", res.Status, res.Body)
+	}
+
+	// infrastructure probe
+	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/infra", "", ""); res.Status != 401 {
+		t.Fatalf("infra without key: %d", res.Status)
+	}
+	if res := s.adminDo("GET", "/admin/v1/infra", ""); res.Status != 200 || res.Body["data"] == nil {
+		t.Fatalf("infra probe: %d %v", res.Status, res.Body)
 	}
 }
