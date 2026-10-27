@@ -38,6 +38,9 @@ func run() error {
 	adminKey := flag.String("admin-api-key", "",
 		"key the admin service sends to the admin API (internal admin port); empty disables the admin API")
 
+	// signs the internal token of every call to the services (core/rpc)
+	internalJWT := jwtc.NewSigner(config.ComponentInternalJWT, jwtc.WithFlagPrefix(config.InternalJWTFlagPrefix))
+
 	sc, err := sctx.NewServiceContext(
 		sctx.WithName(config.ServiceName),
 		// first: activated before the components it instruments, stopped last to flush
@@ -46,7 +49,9 @@ func run() error {
 		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(authnmigrations.FS))),
 		sctx.WithComponent(jwtc.NewSigner(config.ComponentJWT)),
 		sctx.WithComponent(redisc.NewRedis(config.ComponentRedis, "")),
-		sctx.WithComponent(rpcc.NewClient(config.ComponentNoteClient, config.UpstreamNote)),
+		// before the clients that use it: activated first
+		sctx.WithComponent(internalJWT),
+		sctx.WithComponent(rpcc.NewClient(config.ComponentNoteClient, config.UpstreamNote, rpcc.WithIdentitySigner(internalJWT))),
 		// registered last so they are stopped first: stop taking requests, then close the rest
 		sctx.WithComponent(ginc.NewGin(config.ComponentAdminGin, ginc.WithFlagPrefix(config.AdminFlagPrefix))),
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
@@ -119,7 +124,7 @@ func run() error {
 	}
 	rdb := sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client()
 	infraProbe := infra.NewProbe(dbc.GetDB(), rdb, *adminKey)
-	registerAdminRoutes(admin.GetRouter(), auth, authzAdmin, outboxAdmin, infraProbe, *adminKey, sc.Logger("admin-http"))
+	registerAdminRoutes(admin.GetRouter(), auth, authzAdmin, outboxAdmin, infraProbe, internalJWT.JWKS, *adminKey, sc.Logger("admin-http"))
 
 	if err := admin.Run(); err != nil {
 		return err

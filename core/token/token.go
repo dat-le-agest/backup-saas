@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -63,23 +64,37 @@ func KeyID(pub ed25519.PublicKey) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:12])
 }
 
+// Signer signs with the active key of its KeyRing. Swap replaces the ring
+// (key rotation) while tokens are being signed and verified.
 type Signer struct {
-	key    ed25519.PrivateKey
-	kid    string
+	ring   atomic.Pointer[KeyRing]
 	issuer string
 	ttl    time.Duration
 	now    func() time.Time
 }
 
+// NewSigner signs with a single key.
 func NewSigner(key ed25519.PrivateKey, issuer string, ttl time.Duration) *Signer {
-	return &Signer{
-		key:    key,
-		kid:    KeyID(key.Public().(ed25519.PublicKey)),
-		issuer: issuer,
-		ttl:    ttl,
-		now:    time.Now,
+	ring, err := NewKeyRing(key)
+	if err != nil {
+		panic(err) // a single key can't be listed twice: only an invalid key gets here
 	}
+	return NewRingSigner(ring, issuer, ttl)
 }
+
+// NewRingSigner signs with the active key of ring and verifies with all of its keys.
+func NewRingSigner(ring *KeyRing, issuer string, ttl time.Duration) *Signer {
+	s := &Signer{issuer: issuer, ttl: ttl, now: time.Now}
+	s.ring.Store(ring)
+	return s
+}
+
+// Swap makes ring the signer's keys: tokens are signed with its active key from
+// now on, and only its keys verify (Verifier, PublicKeys).
+func (s *Signer) Swap(ring *KeyRing) { s.ring.Store(ring) }
+
+// KeyRing returns the current keys.
+func (s *Signer) KeyRing() *KeyRing { return s.ring.Load() }
 
 // Sign issues an access token for userID in appID (the audience). Pass empty
 // tenantID for a tenant-less token.
@@ -107,9 +122,10 @@ func (s *Signer) Sign(userID, appID, tenantID, role string, membershipVersion in
 		},
 	}
 
+	ring := s.ring.Load()
 	t := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	t.Header["kid"] = s.kid
-	signed, err := t.SignedString(s.key)
+	t.Header["kid"] = ring.activeKid
+	signed, err := t.SignedString(ring.active)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("token: sign: %w", err)
 	}
@@ -117,15 +133,20 @@ func (s *Signer) Sign(userID, appID, tenantID, role string, membershipVersion in
 }
 
 // Verifier verifies tokens signed by s for audience (an app id), e.g. in the
-// gateway that issues them.
+// gateway that issues them. It follows Swap: every key of the current ring verifies.
 func (s *Signer) Verifier(audience string) *Verifier {
-	return NewVerifier(NewStaticKeys(s.key.Public().(ed25519.PublicKey)), s.issuer, audience)
+	return NewVerifier(signerKeys{s}, s.issuer, audience)
 }
 
-// PublicKeys returns the JWKS document for this signer.
+// PublicKeys returns the JWKS document for this signer: every key of its ring.
 func (s *Signer) PublicKeys() JWKS {
-	return NewJWKS(s.key.Public().(ed25519.PublicKey))
+	return s.ring.Load().JWKS()
 }
+
+// signerKeys resolves kids against the signer's current ring.
+type signerKeys struct{ s *Signer }
+
+func (k signerKeys) Key(kid string) (ed25519.PublicKey, error) { return k.s.ring.Load().Key(kid) }
 
 // KeySource resolves a kid to a public key (static set or remote JWKS).
 type KeySource interface {
@@ -160,6 +181,9 @@ func NewVerifier(keys KeySource, issuer, audience string) *Verifier {
 func (v *Verifier) Verify(raw string) (*Claims, error) {
 	var claims Claims
 	_, err := v.parser.ParseWithClaims(raw, &claims, func(t *jwt.Token) (any, error) {
+		if typ, _ := t.Header["typ"].(string); typ == InternalTokenType {
+			return nil, errors.New("an internal token is not an access token")
+		}
 		kid, _ := t.Header["kid"].(string)
 		if kid == "" {
 			return nil, errors.New("missing kid")

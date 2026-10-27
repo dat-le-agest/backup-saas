@@ -126,7 +126,9 @@ type stack struct {
 	notes   *fakeNotes
 	auth    *authn.Module
 	signer  *token.Signer
-	redis   *miniredis.Miniredis // nil without Redis
+	// internal tokens of the calls to the note service, which enforces them
+	internal *token.Signer
+	redis    *miniredis.Miniredis // nil without Redis
 }
 
 type stackOptions struct {
@@ -142,12 +144,18 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	t.Helper()
 	log := zaplogger.NewZapLogger().GetLogger("test")
 
+	internalKey, _ := token.GenerateKey()
+	internal := token.NewSigner(internalKey, "saas-iam", time.Minute)
+
+	// the fake note service authenticates the gateway like the real one (enforce)
 	notes := &fakeNotes{notes: map[uint64]*notev1.Note{}}
 	nmux := http.NewServeMux()
-	nmux.Handle(notev1connect.NewNoteServiceHandler(notes, rpc.HandlerOptions(log)))
+	nmux.Handle(notev1connect.NewNoteServiceHandler(notes, rpc.HandlerOptions(log, rpc.InternalAuth{
+		Mode: rpc.InternalAuthEnforce, Verifier: token.NewInternalVerifier(internal.Keys(), "saas-iam", "note"),
+	})))
 	notesURL := httpxtest.ServeH2C(t, nmux)
 
-	s := &stack{notes: notes}
+	s := &stack{notes: notes, internal: internal}
 	var rdb *redis.Client
 	if o.redis {
 		s.redis = miniredis.RunT(t)
@@ -168,7 +176,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	}
 	s.auth = auth
 
-	c, err := buildContainer(httpxtest.GRPCClient(notesURL, notev1connect.NewNoteServiceClient))
+	c, err := buildContainer(httpxtest.GRPCClient(notesURL, notev1connect.NewNoteServiceClient, internal, "note"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +196,7 @@ func newStack(t *testing.T, o stackOptions) *stack {
 		t.Fatal(err)
 	}
 	infraProbe := infra.NewProbe(testdb.New(t, authnmigrations.FS), rdb, adminKey)
-	registerAdminRoutes(s.admin, auth, authzAdmin, outboxAdmin, infraProbe, adminKey, log)
+	registerAdminRoutes(s.admin, auth, authzAdmin, outboxAdmin, infraProbe, internal.PublicKeys, adminKey, log)
 	return s
 }
 
@@ -583,5 +591,23 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if res := s.adminDo("GET", "/admin/v1/infra", ""); res.Status != 200 || res.Body["data"] == nil {
 		t.Fatalf("infra probe: %d %v", res.Status, res.Body)
+	}
+}
+
+// The services verify the gateway's internal tokens with the keys it serves on
+// its internal admin server, without the admin key.
+func TestInternalJWKS(t *testing.T) {
+	s := newStack(t, stackOptions{})
+	res := httpxtest.Do(s.admin, "GET", config.InternalJWKSPath, "", "")
+	if res.Status != 200 {
+		t.Fatalf("%d %v", res.Status, res.Body)
+	}
+	keys, _ := res.Body["keys"].([]any)
+	if len(keys) != 1 {
+		t.Fatalf("keys %v", res.Body)
+	}
+	kid, _ := keys[0].(map[string]any)["kid"].(string)
+	if kid != s.internal.KeyRing().ActiveKid() || kid == s.signer.KeyRing().ActiveKid() {
+		t.Fatalf("expected the internal key, not the access tokens' one: %s", kid)
 	}
 }

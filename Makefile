@@ -1,4 +1,4 @@
-.PHONY: service test vet jwt-key up down down-v logs ps deps migration admin-web admin-web-dev tools proto proto-lint proto-format proto-check proto-breaking
+.PHONY: service test vet jwt-key jwt-key-activate up down down-v logs ps deps migration admin-web admin-web-dev tools proto proto-lint proto-format proto-check proto-breaking
 
 BIN := $(CURDIR)/.bin
 export PATH := $(BIN):$(PATH)
@@ -53,13 +53,42 @@ admin-web:
 admin-web-dev:
 	cd admin-dashboard && npm install --no-audit --no-fund && npm run dev
 
-# Ed25519 signing key for an app's access tokens: make jwt-key out=apps/notes/gateway/jwt.pem
+# Ed25519 signing keys for an app's access tokens (docs/runbooks/jwt-key-rotation.md):
+#   make jwt-key out=apps/notes/gateway/jwt.pem   a single key (JWT_PRIVATE_KEY_FILE)
+#   make jwt-key keys=<dir> name=2026-11-01       add a key to a key directory (JWT_KEYS_DIR); the
+#                                                 current key keeps signing until jwt-key-activate
+#   make jwt-key-activate keys=<dir> name=2026-11-01
 out ?= apps/notes/gateway/jwt.pem
 jwt-key:
-	@test ! -e "$(out)" || (echo "$(out) already exists, refusing to overwrite" && exit 1)
-	openssl genpkey -algorithm ed25519 -out "$(out)"
-	chmod 600 "$(out)"
-	@echo "set JWT_PRIVATE_KEY_FILE=$(out) for the service that signs the tokens"
+	@if [ -n "$(keys)" ]; then \
+		[ -n "$(name)" ] || { echo "usage: make jwt-key keys=<dir> name=<name, e.g. 2026-11-01>"; exit 1; }; \
+		f="$(keys)/$(name).pem"; \
+		[ ! -e "$$f" ] || { echo "$$f already exists, refusing to overwrite"; exit 1; }; \
+		mkdir -p "$(keys)"; \
+		cur=$$(ls "$(keys)" | grep '\.pem$$' | sort | tail -n 1); \
+		if [ -n "$$cur" ] && [ ! -e "$(keys)/active" ]; then \
+			echo "$${cur%.pem}" > "$(keys)/active"; \
+			echo "pinned the current key: $(keys)/active = $${cur%.pem}"; \
+		fi; \
+		openssl genpkey -algorithm ed25519 -out "$$f" && chmod 600 "$$f" || exit 1; \
+		if [ -z "$$cur" ]; then \
+			echo "added $$f, the first key: it signs. Set JWT_KEYS_DIR=$(keys)"; \
+		else \
+			echo "added $$f (verify only). Once every verifier has it (>= 10 min), run:"; \
+			echo "  make jwt-key-activate keys=$(keys) name=$(name)"; \
+		fi; \
+	else \
+		[ ! -e "$(out)" ] || { echo "$(out) already exists, refusing to overwrite"; exit 1; }; \
+		openssl genpkey -algorithm ed25519 -out "$(out)" && chmod 600 "$(out)" || exit 1; \
+		echo "set JWT_PRIVATE_KEY_FILE=$(out) for the service that signs the tokens"; \
+	fi
+
+jwt-key-activate:
+	@[ -n "$(keys)" ] && [ -n "$(name)" ] || { echo "usage: make jwt-key-activate keys=<dir> name=<key name>"; exit 1; }
+	@[ -e "$(keys)/$(name).pem" ] || { echo "$(keys)/$(name).pem not found"; exit 1; }
+	@echo "$(name)" > "$(keys)/active"
+	@echo "$(name) signs from the next reload (JWT_KEYS_RELOAD, default 60s)."
+	@echo "Remove the previous key after the access token lifetime + 30s (default 630s)."
 
 # every module in go.work, by import path (./... patterns skip dirs starting with "_")
 MODULES = $(shell go list -m | sed 's|$$|/...|')

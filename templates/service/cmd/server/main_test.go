@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	notev1 "api/gen/go/apps/notes/note/v1"
 	"api/gen/go/apps/notes/note/v1/notev1connect"
@@ -21,8 +22,10 @@ import (
 	"core/reqctx"
 	"core/rpc"
 	"core/testdb"
+	"core/token"
 	"core/uow"
 	modelauthz "template/authz"
+	"template/config"
 	grpctransport "template/internal/transport/rpc"
 	"template/migrations"
 
@@ -31,6 +34,20 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
+
+// gateway signs the internal tokens of the test clients, like the app's
+// gateway; the test servers enforce them.
+var gateway = func() *token.Signer {
+	key, err := token.GenerateKey()
+	if err != nil {
+		panic(err)
+	}
+	return token.NewSigner(key, "saas-iam", time.Minute)
+}()
+
+func internalAuth() rpc.InternalAuth {
+	return rpc.InternalAuth{Mode: rpc.InternalAuthEnforce, Verifier: token.NewInternalVerifier(gateway.Keys(), "saas-iam", config.ServiceName)}
+}
 
 // newTestServer wires the real container on Postgres and serves it with h2c,
 // the same way main does through ginc.
@@ -64,7 +81,7 @@ func newTestServerWith(t *testing.T, enforce string) (string, *gorm.DB, *rebac.E
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := buildContainer(db, log, authzSetup{enforce: enforce, model: model, engine: engine})
+	c, err := buildContainer(db, log, authzSetup{enforce: enforce, model: model, engine: engine}, internalAuth())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +107,11 @@ func newClient(url string) notev1connect.NoteServiceClient {
 		&http.Client{Transport: &http.Transport{Protocols: p}},
 		url,
 		connect.WithGRPC(),
-		connect.WithInterceptors(rpc.ClientMetadataInterceptor(), rpc.ClientErrorInterceptor()),
+		connect.WithInterceptors(
+			rpc.ClientMetadataInterceptor(),
+			rpc.ClientIdentityInterceptor(gateway, config.ServiceName),
+			rpc.ClientErrorInterceptor(),
+		),
 	)
 }
 
@@ -222,9 +243,11 @@ func TestConnectJSON(t *testing.T) {
 	post := func(procedure, body string) (*http.Response, error) {
 		req, _ := http.NewRequest(http.MethodPost, url+procedure, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(reqctx.HeaderUserID, "u1")
-		req.Header.Set(reqctx.HeaderTenantID, "t1")
-		req.Header.Set(reqctx.HeaderTenantRole, authz.RoleMember)
+		raw, err := gateway.SignInternal(config.ServiceName, token.Internal{UserID: "u1", TenantID: "t1", Role: authz.RoleMember}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(rpc.HeaderInternalToken, raw)
 		return http.DefaultClient.Do(req)
 	}
 
@@ -459,3 +482,50 @@ func TestReBACEnforced(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Only the gateway's internal token says who is calling: identity headers are
+// ignored, and calls without a valid token are rejected (INTERNAL_AUTH=enforce).
+func TestInternalAuth(t *testing.T) {
+	url := newTestServer(t)
+
+	post := func(headers map[string]string) (*http.Response, []byte) {
+		req, _ := http.NewRequest(http.MethodPost, url+notev1connect.NoteServiceCreateNoteProcedure, strings.NewReader(`{"title":"t"}`))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		return res, body
+	}
+	spoofed := map[string]string{reqctx.HeaderUserID: "admin", reqctx.HeaderTenantID: "t1", reqctx.HeaderTenantRole: authz.RoleOwner}
+
+	// headers alone: rejected
+	if res, body := post(spoofed); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("headers without a token: %d %s", res.StatusCode, body)
+	}
+
+	// a valid token for u1 next to spoofed headers: the note belongs to u1
+	raw, _ := gateway.SignInternal(config.ServiceName, token.Internal{UserID: "u1", TenantID: "t1", Role: authz.RoleMember}, 0)
+	headers := map[string]string{rpc.HeaderInternalToken: raw}
+	for k, v := range spoofed {
+		headers[k] = v
+	}
+	if res, body := post(headers); res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"createdBy":"u1"`) {
+		t.Fatalf("token + spoofed headers: %d %s", res.StatusCode, body)
+	}
+
+	// tokens of another signer, or for another service
+	otherKey, _ := token.GenerateKey()
+	foreign, _ := token.NewSigner(otherKey, "saas-iam", time.Minute).SignInternal(config.ServiceName, token.Internal{UserID: "u1", TenantID: "t1", Role: authz.RoleOwner}, 0)
+	wrongAud, _ := gateway.SignInternal("billing", token.Internal{UserID: "u1", TenantID: "t1", Role: authz.RoleOwner}, 0)
+	for name, raw := range map[string]string{"foreign key": foreign, "another service": wrongAud} {
+		if res, body := post(map[string]string{rpc.HeaderInternalToken: raw}); res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s: %d %s", name, res.StatusCode, body)
+		}
+	}
+}

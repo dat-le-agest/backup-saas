@@ -14,6 +14,7 @@ import (
 	"core/apperr"
 	"core/logger"
 	"core/reqctx"
+	"core/token"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -41,6 +42,22 @@ func (l *captureLogger) Errorf(format string, args ...interface{}) {
 
 const procedure = "/test.v1.EchoService/Echo"
 
+// testSigner signs the internal tokens of the test clients, as a gateway does;
+// test servers verify them (testAuth).
+var testSigner = func() *token.Signer {
+	key, err := token.GenerateKey()
+	if err != nil {
+		panic(err)
+	}
+	return token.NewSigner(key, "test-gateway", time.Minute)
+}()
+
+const testAudience = "echo"
+
+func testAuth() InternalAuth {
+	return InternalAuth{Mode: InternalAuthEnforce, Verifier: token.NewInternalVerifier(testSigner.Keys(), "test-gateway", testAudience)}
+}
+
 // echo returns "user|tenant|request-id" from the context, or the error named in the request.
 func echo(ctx context.Context, req *connect.Request[wrapperspb.StringValue]) (*connect.Response[wrapperspb.StringValue], error) {
 	switch req.Msg.GetValue() {
@@ -63,7 +80,7 @@ func echo(ctx context.Context, req *connect.Request[wrapperspb.StringValue]) (*c
 func newServer(t *testing.T, l logger.Logger) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l)))
+	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l, testAuth())))
 
 	srv := httptest.NewUnstartedServer(mux)
 	srv.Config.Protocols = new(http.Protocols)
@@ -82,6 +99,7 @@ func newClient(url string, timeout time.Duration) *connect.Client[wrapperspb.Str
 		connect.WithGRPC(),
 		connect.WithInterceptors(
 			ClientMetadataInterceptor(),
+			ClientIdentityInterceptor(testSigner, testAudience),
 			ClientTimeoutInterceptor(timeout),
 			ClientErrorInterceptor(),
 		),
@@ -195,11 +213,11 @@ func TestAccessLogAndPanicRecovery(t *testing.T) {
 	l := &captureLogger{}
 	mux := http.NewServeMux()
 	panicking := "/test.v1.EchoService/Panic"
-	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l)))
+	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l, testAuth())))
 	mux.Handle(panicking, connect.NewUnaryHandler(panicking,
 		func(context.Context, *connect.Request[wrapperspb.StringValue]) (*connect.Response[wrapperspb.StringValue], error) {
 			panic("nil map write")
-		}, HandlerOptions(l)))
+		}, HandlerOptions(l, testAuth())))
 	srv := httptest.NewUnstartedServer(mux)
 	srv.Config.Protocols = new(http.Protocols)
 	srv.Config.Protocols.SetUnencryptedHTTP2(true)
@@ -214,7 +232,8 @@ func TestAccessLogAndPanicRecovery(t *testing.T) {
 	p := new(http.Protocols)
 	p.SetUnencryptedHTTP2(true)
 	pc := connect.NewClient[wrapperspb.StringValue, wrapperspb.StringValue](
-		&http.Client{Transport: &http.Transport{Protocols: p}}, srv.URL+panicking, connect.WithGRPC())
+		&http.Client{Transport: &http.Transport{Protocols: p}}, srv.URL+panicking, connect.WithGRPC(),
+		connect.WithInterceptors(ClientIdentityInterceptor(testSigner, testAudience)))
 	_, err := pc.CallUnary(ctx, connect.NewRequest(wrapperspb.String("x")))
 	if connect.CodeOf(err) != connect.CodeInternal || strings.Contains(err.Error(), "nil map") {
 		t.Fatalf("panic surfaced as %v", err)

@@ -68,7 +68,7 @@ func TestTracePropagatesAndReachesLogs(t *testing.T) {
 	l := &fieldLogger{mu: &sync.Mutex{}, lines: &lines}
 
 	mux := http.NewServeMux()
-	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l)))
+	mux.Handle(procedure, connect.NewUnaryHandler(procedure, echo, HandlerOptions(l, testAuth())))
 	srv := httptest.NewUnstartedServer(mux)
 	srv.Config.Protocols = new(http.Protocols)
 	srv.Config.Protocols.SetUnencryptedHTTP2(true)
@@ -83,7 +83,7 @@ func TestTracePropagatesAndReachesLogs(t *testing.T) {
 	p.SetUnencryptedHTTP2(true)
 	client := connect.NewClient[wrapperspb.StringValue, wrapperspb.StringValue](
 		&http.Client{Transport: &http.Transport{Protocols: p}}, srv.URL+procedure,
-		connect.WithGRPC(), connect.WithInterceptors(telemetry, ClientMetadataInterceptor()),
+		connect.WithGRPC(), connect.WithInterceptors(telemetry, ClientMetadataInterceptor(), ClientIdentityInterceptor(testSigner, testAudience)),
 	)
 
 	// a parent span, like the gateway's HTTP server span

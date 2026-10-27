@@ -12,6 +12,7 @@ import (
 	"core/components/authzc"
 	"core/components/ginc"
 	"core/components/gormc"
+	"core/components/internalauthc"
 	"core/components/otelc"
 	"core/di"
 	"core/outbox"
@@ -42,6 +43,8 @@ func run() error {
 		sctx.WithComponent(otelc.NewOtel(config.ComponentOtel)),
 		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(migrations.FS))),
 		sctx.WithComponent(authzc.NewSettings(config.ComponentAuthz)),
+		// every RPC must carry the gateway's internal token (INTERNAL_AUTH=enforce)
+		sctx.WithComponent(internalauthc.New(config.ComponentInternalAuth)),
 		// registered after db so it is stopped first: drain HTTP, then close db
 		sctx.WithComponent(ginc.NewGin(config.ComponentGin)),
 	)
@@ -90,7 +93,8 @@ func run() error {
 	}
 	logger.Infof("authorization: enforce=%s (relationships recorded by the embedded engine)", authzSettings.enforce)
 
-	c, err := buildContainer(db, sc.Logger("app"), authzSettings)
+	internalAuth := sctx.MustGetAs[internalauthc.Component](sc, config.ComponentInternalAuth).Auth()
+	c, err := buildContainer(db, sc.Logger("app"), authzSettings, internalAuth)
 	if err != nil {
 		return err
 	}

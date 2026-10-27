@@ -15,12 +15,14 @@ import (
 )
 
 // HandlerOptions returns the options every service should pass to its generated
-// New<Service>Handler: identity extraction, access log, error translation and
+// New<Service>Handler: request id, caller authentication (auth: the internal
+// token of every call, see InternalAuth), access log, error translation and
 // panic recovery. Interceptors run outermost first: the access log sees the
-// final (translated) code.
-func HandlerOptions(l logger.Logger) connect.HandlerOption {
+// caller's identity and the final (translated) code.
+func HandlerOptions(l logger.Logger, auth InternalAuth) connect.HandlerOption {
 	interceptors := []connect.Interceptor{
 		ServerMetadataInterceptor(),
+		serverIdentityInterceptor(auth, l),
 		ServerLoggingInterceptor(l),
 		ServerErrorInterceptor(l),
 	}
@@ -110,22 +112,12 @@ func isServerError(code connect.Code) bool {
 	return false
 }
 
-// ServerMetadataInterceptor reads identity and request id headers set by the
-// gateway (or another service) into the context.
-//
-// The headers are trusted as-is: services must only be reachable from the
-// internal network (network policy / mTLS), never directly from the internet.
+// ServerMetadataInterceptor reads the request id header set by the gateway (or
+// another service) into the context. The caller's identity comes from its
+// internal token (InternalAuth), never from this interceptor.
 func ServerMetadataInterceptor() connect.Interceptor {
 	return &metadataInterceptor{
 		server: func(ctx context.Context, h http.Header) context.Context {
-			if id := (reqctx.Identity{
-				AppID:    h.Get(reqctx.HeaderAppID),
-				UserID:   h.Get(reqctx.HeaderUserID),
-				TenantID: h.Get(reqctx.HeaderTenantID),
-				Role:     h.Get(reqctx.HeaderTenantRole),
-			}); !id.IsZero() {
-				ctx = reqctx.WithIdentity(ctx, id)
-			}
 			if rid := h.Get(reqctx.HeaderRequestID); rid != "" {
 				ctx = reqctx.WithRequestID(ctx, rid)
 			}
@@ -134,17 +126,12 @@ func ServerMetadataInterceptor() connect.Interceptor {
 	}
 }
 
-// ClientMetadataInterceptor forwards identity and request id from the context
-// to upstream services.
+// ClientMetadataInterceptor forwards the request id from the context to
+// upstream services. The identity goes in the internal token
+// (ClientIdentityInterceptor).
 func ClientMetadataInterceptor() connect.Interceptor {
 	return &metadataInterceptor{
 		client: func(ctx context.Context, h http.Header) {
-			if id, ok := reqctx.IdentityFrom(ctx); ok {
-				setIfNotEmpty(h, reqctx.HeaderAppID, id.AppID)
-				setIfNotEmpty(h, reqctx.HeaderUserID, id.UserID)
-				setIfNotEmpty(h, reqctx.HeaderTenantID, id.TenantID)
-				setIfNotEmpty(h, reqctx.HeaderTenantRole, id.Role)
-			}
 			setIfNotEmpty(h, reqctx.HeaderRequestID, reqctx.RequestIDFrom(ctx))
 		},
 	}

@@ -25,15 +25,17 @@ var _ notev1connect.NoteServiceHandler = (*NoteHandler)(nil)
 type NoteHandler struct {
 	svc    *service.NoteService
 	logger logger.Logger
+	auth   rpc.InternalAuth
 }
 
-func NewNoteHandler(svc *service.NoteService, l logger.Logger) *NoteHandler {
-	return &NoteHandler{svc: svc, logger: l.With("handler", "note")}
+// auth: how callers are authenticated (their internal token, core/components/internalauthc).
+func NewNoteHandler(svc *service.NoteService, l logger.Logger, auth rpc.InternalAuth) *NoteHandler {
+	return &NoteHandler{svc: svc, logger: l.With("handler", "note"), auth: auth}
 }
 
 // Mount registers the handler on the router under /apps.notes.note.v1.NoteService/.
 func (h *NoteHandler) Mount(r gin.IRouter) {
-	path, handler := notev1connect.NewNoteServiceHandler(h, rpc.HandlerOptions(h.logger))
+	path, handler := notev1connect.NewNoteServiceHandler(h, rpc.HandlerOptions(h.logger, h.auth))
 	ginc.Mount(r, path, handler)
 }
 

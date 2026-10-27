@@ -14,6 +14,7 @@ import (
 	"core/logger"
 	"core/outbox"
 	"core/response"
+	"core/token"
 	"notes-gateway/config"
 	"notes-gateway/internal/handler"
 
@@ -69,10 +70,16 @@ func registerRoutes(r *gin.Engine, c *di.Container, opts routeOptions) {
 // registerAdminRoutes: the internal admin server (never published), for the
 // platform's admin service: /admin/v1/* behind the app's admin key, with the
 // services' authorization engines under /admin/v1/authz and outbox under /admin/v1/outbox.
-func registerAdminRoutes(r *gin.Engine, auth *authn.Module, authzAdmin *rebac.AdminProxy, outboxAdmin *outbox.AdminProxy, infraProbe *infra.Probe, adminKey string, l logger.Logger) {
+// It also serves the public keys of the internal tokens to the services
+// (config.InternalJWKSPath, no key: they are public).
+func registerAdminRoutes(r *gin.Engine, auth *authn.Module, authzAdmin *rebac.AdminProxy, outboxAdmin *outbox.AdminProxy, infraProbe *infra.Probe, internalKeys func() token.JWKS, adminKey string, l logger.Logger) {
 	r.Use(httpx.RequestID(), httpx.AccessLog(l))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET(config.InternalJWKSPath, func(c *gin.Context) {
+		c.Header("Cache-Control", "max-age=60")
+		c.JSON(http.StatusOK, internalKeys())
 	})
 	auth.AdminHTTP.RegisterRoutes(r)
 	authzAdmin.RegisterRoutes(r)

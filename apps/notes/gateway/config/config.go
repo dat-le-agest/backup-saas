@@ -8,13 +8,14 @@ const App = "notes"
 
 // Component IDs registered in sctx. Also used as logger prefixes.
 const (
-	ComponentOtel       = "otel"
-	ComponentDB         = "db"
-	ComponentGin        = "gin"
-	ComponentAdminGin   = "admin-gin"
-	ComponentJWT        = "jwt"
-	ComponentRedis      = "redis"
-	ComponentNoteClient = "note-client"
+	ComponentOtel        = "otel"
+	ComponentDB          = "db"
+	ComponentGin         = "gin"
+	ComponentAdminGin    = "admin-gin"
+	ComponentJWT         = "jwt"
+	ComponentInternalJWT = "internal-jwt"
+	ComponentRedis       = "redis"
+	ComponentNoteClient  = "note-client"
 )
 
 // Flag prefixes for upstream services: <prefix>-url / <PREFIX>_URL.
@@ -24,3 +25,12 @@ const (
 
 // AdminFlagPrefix: the internal admin server's flags (--admin-gin-port / ADMIN_GIN_PORT).
 const AdminFlagPrefix = "admin"
+
+// InternalJWTFlagPrefix: the signer of internal tokens, the proof of the
+// gateway's calls to its services (--internal-jwt-keys-dir / INTERNAL_JWT_KEYS_DIR).
+// Its own keys, not the access tokens' ones.
+const InternalJWTFlagPrefix = "internal-jwt"
+
+// InternalJWKSPath serves the internal tokens' public keys on the internal
+// admin server, for the services (their INTERNAL_JWT_JWKS_URL).
+const InternalJWKSPath = "/.well-known/internal-jwks.json"

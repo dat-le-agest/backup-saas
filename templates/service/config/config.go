@@ -8,4 +8,6 @@ const (
 	ComponentDB    = "db"
 	ComponentAuthz = "authz"
 	ComponentGin   = "gin"
+	// how callers (the app's gateway) are authenticated: core/components/internalauthc
+	ComponentInternalAuth = "internal-auth"
 )

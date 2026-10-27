@@ -16,8 +16,9 @@ type Authenticator interface {
 }
 
 // Auth rejects requests without a valid identity and stores the identity in the
-// request context. core/rpc forwards it upstream as X-App-Id / X-User-Id / X-Tenant-Id;
-// headers sent by the client itself are never forwarded, so they can't be spoofed.
+// request context. core/rpc forwards it upstream in a signed internal token
+// (X-Internal-Token); headers sent by the client itself are never forwarded,
+// and services ignore identity headers, so they can't be spoofed.
 func Auth(a Authenticator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := a.Authenticate(c.Request)

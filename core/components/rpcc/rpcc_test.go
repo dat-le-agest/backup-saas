@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"core/apperr"
 	"core/components/ginc"
@@ -15,6 +16,7 @@ import (
 	"core/reqctx"
 	"core/rpc"
 	"core/sctx"
+	"core/token"
 
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
@@ -38,6 +40,34 @@ type fakeSC struct{ sctx.ServiceContext }
 
 func (fakeSC) EnvName() string             { return sctx.PrdEnv }
 func (fakeSC) Logger(string) logger.Logger { return nopLogger{} }
+
+// signerSource is an activated (or not, with a nil signer) jwtc signer.
+type signerSource struct{ s *token.Signer }
+
+func (s signerSource) Signer() *token.Signer { return s.s }
+
+func newTestSigner(t *testing.T) *token.Signer {
+	t.Helper()
+	key, err := token.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token.NewSigner(key, "test-gateway", time.Minute)
+}
+
+func TestActivateValidatesSigner(t *testing.T) {
+	c := NewClient("note-client", "note-service", WithIdentitySigner(signerSource{}))
+	c.rawURL, c.audience = "http://note:3000", "note"
+	if err := c.Activate(fakeSC{}); err == nil {
+		t.Error("a signer that is not activated: expected error")
+	}
+
+	c = NewClient("note-client", "note-service", WithIdentitySigner(signerSource{newTestSigner(t)}))
+	c.rawURL = "http://note:3000"
+	if err := c.Activate(fakeSC{}); err == nil {
+		t.Error("no audience: expected error")
+	}
+}
 
 func TestActivateValidatesURL(t *testing.T) {
 	for _, u := range []string{"", "note:3000", "ftp://note:3000", "http://"} {
@@ -75,6 +105,7 @@ func TestGRPCOverGinH2C(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	signer := newTestSigner(t)
 	handler := connect.NewUnaryHandler(procedure,
 		func(ctx context.Context, req *connect.Request[wrapperspb.StringValue]) (*connect.Response[wrapperspb.StringValue], error) {
 			if req.Msg.GetValue() == "missing" {
@@ -84,7 +115,9 @@ func TestGRPCOverGinH2C(t *testing.T) {
 			id, _ := reqctx.IdentityFrom(ctx)
 			return connect.NewResponse(wrapperspb.String(req.Peer().Protocol + "|" + id.UserID)), nil
 		},
-		rpc.HandlerOptions(nopLogger{}),
+		rpc.HandlerOptions(nopLogger{}, rpc.InternalAuth{
+			Mode: rpc.InternalAuthEnforce, Verifier: token.NewInternalVerifier(signer.Keys(), "test-gateway", "echo"),
+		}),
 	)
 	ginc.Mount(server.GetRouter(), "/test.v1.EchoService/", handler)
 	server.GetRouter().GET("/healthz", func(c *gin.Context) { c.String(200, c.Request.Proto) })
@@ -94,9 +127,10 @@ func TestGRPCOverGinH2C(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = server.Stop() })
 
-	cc := NewClient("echo-client", "echo-service")
+	cc := NewClient("echo-client", "echo-service", WithIdentitySigner(signerSource{signer}))
 	cc.rawURL = "http://127.0.0.1:" + strconv.Itoa(port)
 	cc.timeout = 5
+	cc.audience = "echo" // the flag default: the prefix without "-service"
 	if err := cc.Activate(fakeSC{}); err != nil {
 		t.Fatal(err)
 	}

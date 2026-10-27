@@ -9,23 +9,27 @@ import (
 	"time"
 
 	"core/rpc"
+	"core/token"
 
 	"connectrpc.com/connect"
 )
 
-// GRPCClient mirrors what rpcc builds: gRPC over h2c + core/rpc client interceptors.
-func GRPCClient[T any](url string, ctor func(connect.HTTPClient, string, ...connect.ClientOption) T) T {
+// GRPCClient mirrors what rpcc builds: gRPC over h2c + core/rpc client
+// interceptors, signing internal tokens for audience with signer (nil: none,
+// like a client without rpcc.WithIdentitySigner).
+func GRPCClient[T any](url string, ctor func(connect.HTTPClient, string, ...connect.ClientOption) T, signer *token.Signer, audience string) T {
 	p := new(http.Protocols)
 	p.SetUnencryptedHTTP2(true)
+	interceptors := []connect.Interceptor{rpc.ClientMetadataInterceptor()}
+	if signer != nil {
+		interceptors = append(interceptors, rpc.ClientIdentityInterceptor(signer, audience))
+	}
+	interceptors = append(interceptors, rpc.ClientTimeoutInterceptor(2*time.Second), rpc.ClientErrorInterceptor())
 	return ctor(
 		&http.Client{Transport: &http.Transport{Protocols: p}},
 		url,
 		connect.WithGRPC(),
-		connect.WithInterceptors(
-			rpc.ClientMetadataInterceptor(),
-			rpc.ClientTimeoutInterceptor(2*time.Second),
-			rpc.ClientErrorInterceptor(),
-		),
+		connect.WithInterceptors(interceptors...),
 	)
 }
 

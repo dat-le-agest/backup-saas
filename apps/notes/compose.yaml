@@ -51,6 +51,9 @@ services:
       DB_DSN: postgres://note:note@postgres:5432/note?sslmode=disable
       # admin API of its ReBAC engine, reached only through the gateway's admin API
       ADMIN_API_KEY: dev-notes-admin-key
+      # every RPC must carry the gateway's internal token; identity headers are ignored
+      INTERNAL_AUTH: enforce
+      INTERNAL_JWT_JWKS_URL: http://notes-gateway:9081/.well-known/internal-jwks.json
 
   # public API of the notes app, with its own authentication (core/authn):
   # users, tenants, members and tokens in the notes_auth database
@@ -68,6 +71,9 @@ services:
       GIN_PORT: "8081"
       DB_DSN: postgres://notes_auth:notes_auth@postgres:5432/notes_auth?sslmode=disable
       NOTE_SERVICE_URL: http://note:3000
+      # internal tokens of the calls to the note service (its INTERNAL_JWT_AUDIENCE);
+      # dev signs them with an ephemeral key, elsewhere set INTERNAL_JWT_KEYS_DIR
+      NOTE_SERVICE_AUDIENCE: note
       # internal admin API for the admin dashboard: never published
       ADMIN_GIN_PORT: "9081"
       ADMIN_API_KEY: dev-notes-admin-key # the admin service's ADMIN_APPS has the same key

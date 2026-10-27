@@ -4,7 +4,9 @@ package reqctx
 
 import "context"
 
-// Header names used to propagate metadata between gateway and services.
+// Header names used to propagate metadata between gateway and services. The
+// identity headers are only read by services in the off and permissive modes
+// of core/rpc.InternalAuth: the identity travels in a signed internal token.
 const (
 	HeaderAppID      = "X-App-Id"
 	HeaderUserID     = "X-User-Id"

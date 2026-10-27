@@ -7,6 +7,7 @@ import (
 	"core/components/authzc"
 	"core/di"
 	"core/logger"
+	"core/rpc"
 	"core/uow"
 	"template/internal/repository"
 	"template/internal/service"
@@ -44,8 +45,9 @@ func (a authzSetup) relationships() authz.Relationships {
 }
 
 // buildContainer wires repositories, services and handlers.
-// Infrastructure (db, logger, authz setup...) comes from main and is bridged in via di.Instance.
-func buildContainer(db *gorm.DB, log logger.Logger, a authzSetup) (*di.Container, error) {
+// Infrastructure (db, logger, authz setup, how callers are authenticated...)
+// comes from main and is bridged in via di.Instance.
+func buildContainer(db *gorm.DB, log logger.Logger, a authzSetup, internalAuth rpc.InternalAuth) (*di.Container, error) {
 	c := di.New()
 
 	steps := []func() error{
@@ -59,6 +61,7 @@ func buildContainer(db *gorm.DB, log logger.Logger, a authzSetup) (*di.Container
 			return di.Provide[uow.UnitOfWork](c, func(u *uow.Gorm) uow.UnitOfWork { return u }, di.Singleton)
 		},
 		func() error { return di.Instance[logger.Logger](c, log) },
+		func() error { return di.Instance[rpc.InternalAuth](c, internalAuth) },
 
 		// authorization
 		func() error { return di.Instance[authz.Authorizer](c, a.authorizer()) },

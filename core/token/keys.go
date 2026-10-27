@@ -40,3 +40,29 @@ func EncodePrivateKeyPEM(key ed25519.PrivateKey) ([]byte, error) {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
 }
+
+// ParsePublicKeyPEM reads a PKIX "PUBLIC KEY" PEM block, as produced by
+// `openssl pkey -in key.pem -pubout`.
+func ParsePublicKeyPEM(data []byte) (ed25519.PublicKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, errors.New("token: expected a PUBLIC KEY PEM block")
+	}
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("token: parse public key: %w", err)
+	}
+	ed, ok := key.(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("token: expected an Ed25519 key, got %T", key)
+	}
+	return ed, nil
+}
+
+func EncodePublicKeyPEM(key ed25519.PublicKey) ([]byte, error) {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), nil
+}

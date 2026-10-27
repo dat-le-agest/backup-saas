@@ -1,8 +1,8 @@
 // Package rpcc is the sctx component for calling another service over gRPC (Connect).
 //
-//	sctx.WithComponent(rpcc.NewClient("note-client", "note-service"))
-//	// flags: --note-service-url, --note-service-timeout
-//	// env:   NOTE_SERVICE_URL,   NOTE_SERVICE_TIMEOUT
+//	sctx.WithComponent(rpcc.NewClient("note-client", "note-service", rpcc.WithIdentitySigner(internalJWT)))
+//	// flags: --note-service-url, --note-service-timeout, --note-service-audience
+//	// env:   NOTE_SERVICE_URL,   NOTE_SERVICE_TIMEOUT,   NOTE_SERVICE_AUDIENCE
 //
 //	cc := sctx.MustGetAs[rpcc.ClientComponent](sc, "note-client")
 //	notes := rpcc.New(cc, notev1connect.NewNoteServiceClient)
@@ -12,12 +12,14 @@ import (
 	"core/logger"
 	"core/rpc"
 	"core/sctx"
+	"core/token"
 	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -43,12 +45,19 @@ func New[T any](
 	return ctor(c.HTTPClient(), c.BaseURL(), append(c.Options(), opts...)...)
 }
 
+// SignerSource provides the signer of internal tokens (a jwtc.SignerComponent).
+type SignerSource interface {
+	Signer() *token.Signer
+}
+
 type rpcClient struct {
 	id       string
 	prefix   string
 	optional bool
+	signer   SignerSource
 	rawURL   string
 	timeout  int
+	audience string
 
 	logger     logger.Logger
 	telemetry  connect.Interceptor
@@ -63,6 +72,12 @@ type Option func(*rpcClient)
 // (Enabled() is false) instead of failing at startup. For upstreams a service
 // can work without (an optional upstream).
 func Optional() Option { return func(c *rpcClient) { c.optional = true } }
+
+// WithIdentitySigner signs an internal token for every call (core/rpc
+// ClientIdentityInterceptor), for the upstream named by --<prefix>-audience.
+// Upstreams in enforce mode (INTERNAL_AUTH) reject calls without one. s must be
+// registered in sctx before the client, so it is activated first.
+func WithIdentitySigner(s SignerSource) Option { return func(c *rpcClient) { c.signer = s } }
 
 // NewClient: id is the sctx component ID, prefix names the flags (<prefix>-url, <prefix>-timeout).
 func NewClient(id, prefix string, opts ...Option) *rpcClient {
@@ -93,6 +108,13 @@ func (c *rpcClient) InitFlags() {
 		defaultTimeout,
 		"default deadline in seconds for unary calls without one, 0 = none - Default 10",
 	)
+
+	flag.StringVar(
+		&c.audience,
+		fmt.Sprintf("%s-audience", c.prefix),
+		strings.TrimSuffix(c.prefix, "-service"),
+		fmt.Sprintf("service name the internal tokens are issued for (its INTERNAL_JWT_AUDIENCE) - Default %s", strings.TrimSuffix(c.prefix, "-service")),
+	)
 }
 
 func (c *rpcClient) Activate(serviceCtx sctx.ServiceContext) error {
@@ -112,6 +134,15 @@ func (c *rpcClient) Activate(serviceCtx sctx.ServiceContext) error {
 	}
 	c.baseURL = u.String()
 
+	if c.signer != nil {
+		if c.signer.Signer() == nil {
+			return fmt.Errorf("%s: the internal token signer is not activated (register it before the client)", c.id)
+		}
+		if c.audience == "" {
+			return fmt.Errorf("%s-audience is required to sign internal tokens", c.prefix)
+		}
+	}
+
 	// gRPC needs HTTP/2: h2c for http://, regular HTTP/2 over TLS for https://
 	protocols := new(http.Protocols)
 	protocols.SetHTTP2(true)
@@ -130,7 +161,11 @@ func (c *rpcClient) Activate(serviceCtx sctx.ServiceContext) error {
 		return fmt.Errorf("rpc client telemetry: %w", err)
 	}
 
-	c.logger.Infof("rpc client ready (url=%s, timeout=%ds)", c.baseURL, c.timeout)
+	if c.signer != nil {
+		c.logger.Infof("rpc client ready (url=%s, timeout=%ds, internal tokens for %s)", c.baseURL, c.timeout, c.audience)
+	} else {
+		c.logger.Warnf("rpc client ready (url=%s, timeout=%ds) without internal tokens: upstreams enforcing internal auth reject its calls", c.baseURL, c.timeout)
+	}
 	return nil
 }
 
@@ -153,13 +188,16 @@ func (c *rpcClient) BaseURL() string {
 }
 
 func (c *rpcClient) Options() []connect.ClientOption {
+	interceptors := []connect.Interceptor{c.telemetry, rpc.ClientMetadataInterceptor()}
+	if c.signer != nil {
+		interceptors = append(interceptors, rpc.ClientIdentityInterceptor(c.signer.Signer(), c.audience))
+	}
+	interceptors = append(interceptors,
+		rpc.ClientTimeoutInterceptor(time.Duration(c.timeout)*time.Second),
+		rpc.ClientErrorInterceptor(),
+	)
 	return []connect.ClientOption{
 		connect.WithGRPC(),
-		connect.WithInterceptors(
-			c.telemetry,
-			rpc.ClientMetadataInterceptor(),
-			rpc.ClientTimeoutInterceptor(time.Duration(c.timeout)*time.Second),
-			rpc.ClientErrorInterceptor(),
-		),
+		connect.WithInterceptors(interceptors...),
 	}
 }

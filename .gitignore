@@ -3,3 +3,6 @@
 *.db
 *.db-journal
 *.pem
+jwt-keys/
+internal-jwt-keys/
+internal-jwt-public-keys/
