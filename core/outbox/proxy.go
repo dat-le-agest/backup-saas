@@ -19,18 +19,40 @@ import (
 // AdminProxy exposes the outboxes of an app's services through the app's admin API:
 // GET /admin/v1/outbox lists the services, /admin/v1/outbox/<service>/<path> is forwarded
 // to that service's /admin/v1/outbox/<path> (AdminHandler) with the same admin key.
+// An outbox of the process itself (WithLocal, e.g. the gateway's) is served in-process.
 type AdminProxy struct {
 	key       string
 	services  map[string]*url.URL
+	local     map[string]http.Handler
 	names     []string
 	transport http.RoundTripper
 	logger    logger.Logger
 }
 
+type ProxyOption func(*AdminProxy)
+
+// WithLocal lists the outbox of this process under name, served by h.
+func WithLocal(name string, h *AdminHandler) ProxyOption {
+	return func(p *AdminProxy) {
+		r := gin.New()
+		h.RegisterRoutes(r)
+		p.local[name] = r
+	}
+}
+
 // NewAdminProxy: services maps a service name to the base URL serving its
 // AdminHandler, e.g. {"note": "http://note:3000"}.
-func NewAdminProxy(key string, services map[string]string, transport http.RoundTripper, l logger.Logger) (*AdminProxy, error) {
-	p := &AdminProxy{key: key, services: map[string]*url.URL{}, transport: transport, logger: l}
+func NewAdminProxy(key string, services map[string]string, transport http.RoundTripper, l logger.Logger, opts ...ProxyOption) (*AdminProxy, error) {
+	p := &AdminProxy{key: key, services: map[string]*url.URL{}, local: map[string]http.Handler{}, transport: transport, logger: l}
+	for _, opt := range opts {
+		opt(p)
+	}
+	for name := range p.local {
+		if _, dup := services[name]; dup {
+			return nil, fmt.Errorf("outbox admin proxy: service %s is both local and remote", name)
+		}
+		p.names = append(p.names, name)
+	}
 	for name, raw := range services {
 		u, err := url.Parse(raw)
 		if err != nil || u.Scheme == "" || u.Host == "" {
@@ -52,6 +74,13 @@ func (p *AdminProxy) RegisterRoutes(r gin.IRouter) {
 
 func (p *AdminProxy) forward(c *gin.Context) {
 	name := c.Param("service")
+	if h, ok := p.local[name]; ok {
+		req := c.Request.Clone(c.Request.Context())
+		req.URL.Path, req.URL.RawPath = "/admin/v1/outbox"+c.Param("path"), ""
+		h.ServeHTTP(c.Writer, req)
+		c.Abort()
+		return
+	}
 	target, ok := p.services[name]
 	if !ok {
 		response.Fail(c, fmt.Errorf("%w: no outbox service named %q", apperr.ErrNotFound, name))

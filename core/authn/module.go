@@ -10,6 +10,7 @@ import (
 	"core/authn/service"
 	"core/authz/rebac"
 	"core/logger"
+	"core/mail"
 	"core/token"
 	"core/uow"
 
@@ -35,7 +36,11 @@ type Config struct {
 	DevLogin bool
 	// AdminKey protects the admin API (shared with the admin service); empty disables it.
 	AdminKey string
-	Logger   logger.Logger
+	// Mailer sends account mail (email verification, password reset,
+	// invitations): a mail.Queue on an outbox in DB, so mail is stored with the
+	// change it is about and delivered by the app's relay. nil: no account mail.
+	Mailer mail.Sender
+	Logger logger.Logger
 }
 
 // Module is an app's authentication, wired.
@@ -52,6 +57,9 @@ type Module struct {
 	// HTTP: public endpoints and the admin API.
 	HTTP      *httpapi.Handler
 	AdminHTTP *httpapi.AdminHandler
+
+	// Mailer of the account mail (Config.Mailer), nil without one.
+	Mailer mail.Sender
 }
 
 // cache entries must outlive the access tokens they protect
@@ -98,5 +106,6 @@ func New(cfg Config) (*Module, error) {
 		),
 		HTTP:      httpapi.NewHandler(auth, tokens, tenants, members),
 		AdminHTTP: httpapi.NewAdminHandler(admin, cfg.App, cfg.AdminKey),
+		Mailer:    cfg.Mailer,
 	}, nil
 }

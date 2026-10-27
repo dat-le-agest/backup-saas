@@ -17,11 +17,11 @@ COMPOSE := docker compose -f deploy/compose.yaml
 
 up:
 	$(COMPOSE) up -d --build
-	@echo "admin http://localhost:8090 | notes http://localhost:8081 | grafana http://localhost:3030 | alloy http://localhost:12345"
+	@echo "admin http://localhost:8090 | notes http://localhost:8081 | grafana http://localhost:3030 | alloy http://localhost:12345 | mail http://localhost:8025"
 
-# only Postgres + Redis, to run services with `go run` against them
+# only Postgres, Redis and Mailpit, to run services with `go run` against them
 deps:
-	$(COMPOSE) up -d --wait postgres redis
+	$(COMPOSE) up -d --wait postgres redis mailpit
 
 down:
 	$(COMPOSE) down

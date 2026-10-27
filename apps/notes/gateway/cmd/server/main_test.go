@@ -21,7 +21,6 @@ import (
 	"core/httpx/httpxtest"
 	"core/infra"
 	zaplogger "core/logger/zap"
-	"core/outbox"
 	"core/reqctx"
 	"core/rpc"
 	"core/testdb"
@@ -191,11 +190,12 @@ func newStack(t *testing.T, o stackOptions) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outboxAdmin, err := outbox.NewAdminProxy(adminKey, map[string]string{"note": "http://127.0.0.1:1"}, http.DefaultTransport, log)
+	authDB := testdb.New(t, authnmigrations.FS)
+	outboxAdmin, err := newOutboxAdmin(adminKey, authDB, map[string]string{"note": "http://127.0.0.1:1"}, http.DefaultTransport, log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	infraProbe := infra.NewProbe(testdb.New(t, authnmigrations.FS), rdb, adminKey)
+	infraProbe := infra.NewProbe(authDB, rdb, adminKey)
 	registerAdminRoutes(s.admin, auth, authzAdmin, outboxAdmin, infraProbe, internal.PublicKeys, adminKey, log)
 	return s
 }
@@ -581,8 +581,12 @@ func TestAdminAPI(t *testing.T) {
 	if res := httpxtest.Do(s.admin, "GET", "/admin/v1/outbox", "", ""); res.Status != 401 {
 		t.Fatalf("outbox without key: %d", res.Status)
 	}
-	if res := s.adminDo("GET", "/admin/v1/outbox", ""); res.Status != 200 || fmt.Sprint(res.Body["data"]) != "[note]" {
+	if res := s.adminDo("GET", "/admin/v1/outbox", ""); res.Status != 200 || fmt.Sprint(res.Body["data"]) != "[gateway note]" {
 		t.Fatalf("outbox services: %d %v", res.Status, res.Body)
+	}
+	// the gateway's own outbox (account mail) is served in-process
+	if res := s.adminDo("GET", "/admin/v1/outbox/gateway/stats", ""); res.Status != 200 {
+		t.Fatalf("gateway outbox: %d %v", res.Status, res.Body)
 	}
 
 	// infrastructure probe

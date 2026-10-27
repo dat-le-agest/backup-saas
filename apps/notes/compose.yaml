@@ -65,6 +65,7 @@ services:
       redis: { condition: service_started }
       alloy: { condition: service_started }
       note: { condition: service_started }
+      mailpit: { condition: service_started }
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: notes-gateway
@@ -74,6 +75,10 @@ services:
       # internal tokens of the calls to the note service (its INTERNAL_JWT_AUDIENCE);
       # dev signs them with an ephemeral key, elsewhere set INTERNAL_JWT_KEYS_DIR
       NOTE_SERVICE_AUDIENCE: note
+      # account mail, caught by Mailpit (http://localhost:8025)
+      MAIL_DRIVER: smtp
+      MAIL_SMTP_URL: smtp://mailpit:1025?tls=none
+      MAIL_FROM: Notes <no-reply@notes.local>
       # internal admin API for the admin dashboard: never published
       ADMIN_GIN_PORT: "9081"
       ADMIN_API_KEY: dev-notes-admin-key # the admin service's ADMIN_APPS has the same key

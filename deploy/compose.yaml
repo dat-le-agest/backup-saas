@@ -8,6 +8,7 @@
 #   postgres localhost:5432 (admin/admin, notes_auth/notes_auth, note/note; superuser postgres/postgres)
 #   grafana  http://localhost:3030   (no login)
 #   alloy    http://localhost:12345  (pipeline UI)
+#   mailpit  http://localhost:8025   (mail sent by the apps; SMTP localhost:1025)
 #
 # A new app adds its own compose file (apps/<app>/compose.yaml) to the list below.
 name: saas

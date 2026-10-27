@@ -14,12 +14,15 @@ import (
 	"core/components/ginc"
 	"core/components/gormc"
 	"core/components/jwtc"
+	"core/components/mailc"
 	"core/components/otelc"
 	"core/components/redisc"
 	"core/components/rpcc"
 	"core/infra"
+	"core/mail"
 	"core/outbox"
 	"core/sctx"
+	"core/uow"
 	"notes-gateway/config"
 	"notes-gateway/internal/client"
 
@@ -49,6 +52,8 @@ func run() error {
 		sctx.WithComponent(gormc.NewGormDB(config.ComponentDB, "", gormc.WithMigrations(authnmigrations.FS))),
 		sctx.WithComponent(jwtc.NewSigner(config.ComponentJWT)),
 		sctx.WithComponent(redisc.NewRedis(config.ComponentRedis, "")),
+		// delivers account mail (MAIL_DRIVER)
+		sctx.WithComponent(mailc.NewMail(config.ComponentMail)),
 		// before the clients that use it: activated first
 		sctx.WithComponent(internalJWT),
 		sctx.WithComponent(rpcc.NewClient(config.ComponentNoteClient, config.UpstreamNote, rpcc.WithIdentitySigner(internalJWT))),
@@ -78,6 +83,14 @@ func run() error {
 		return nil
 	}
 
+	// account mail: queued in the outbox of the authn database with the change
+	// it is about, delivered after commit by this relay (stopped before the db)
+	ob := outbox.New(uow.New(dbc.GetDB()))
+	relay := ob.NewRelay(dbc.GetDB(), sc.Logger("outbox"), outbox.RelayOptions{})
+	relay.HandleSensitive(mail.Topic, mail.Deliver(sctx.MustGetAs[mailc.MailComponent](sc, config.ComponentMail).Sender(), sc.Logger("mail")))
+	relay.Start()
+	defer relay.Stop()
+
 	auth, err := authn.New(authn.Config{
 		App:      config.App,
 		DB:       dbc.GetDB(),
@@ -85,6 +98,7 @@ func run() error {
 		Redis:    sctx.MustGetAs[redisc.RedisComponent](sc, config.ComponentRedis).Client(),
 		DevLogin: sc.EnvName() == sctx.DevEnv,
 		AdminKey: *adminKey,
+		Mailer:   mail.NewQueue(ob),
 		Logger:   sc.Logger("authn"),
 	})
 	if err != nil {
@@ -116,8 +130,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// the services' outbox engines, through this admin API: /admin/v1/outbox/<service>/*
-	outboxAdmin, err := outbox.NewAdminProxy(*adminKey, map[string]string{"note": noteClient.BaseURL()},
+	// the outboxes, through this admin API: /admin/v1/outbox/<service>/*, the gateway's own included
+	outboxAdmin, err := newOutboxAdmin(*adminKey, dbc.GetDB(), map[string]string{"note": noteClient.BaseURL()},
 		otelhttp.NewTransport(http.DefaultTransport), sc.Logger("outbox-admin"))
 	if err != nil {
 		return err

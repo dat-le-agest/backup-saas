@@ -15,13 +15,33 @@ import (
 
 // AdminHandler exposes the outbox of a service for the platform's admin dashboard.
 type AdminHandler struct {
-	db  *gorm.DB
-	key string
+	db        *gorm.DB
+	key       string
+	sensitive map[string]bool
 }
 
-func NewAdminHandler(db *gorm.DB, key string) *AdminHandler {
-	return &AdminHandler{db: db, key: key}
+type AdminOption func(*AdminHandler)
+
+// WithSensitiveTopics hides the payload of these topics (Relay.HandleSensitive):
+// pending and set aside messages still hold it.
+func WithSensitiveTopics(topics ...string) AdminOption {
+	return func(h *AdminHandler) {
+		for _, t := range topics {
+			h.sensitive[t] = true
+		}
+	}
 }
+
+func NewAdminHandler(db *gorm.DB, key string, opts ...AdminOption) *AdminHandler {
+	h := &AdminHandler{db: db, key: key, sensitive: map[string]bool{}}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// RedactedPayload replaces the payload of sensitive topics in the admin API.
+const RedactedPayload = `{"redacted":true}`
 
 // RegisterRoutes mounts /admin/v1/outbox/* on r.
 func (h *AdminHandler) RegisterRoutes(r gin.IRouter) {
@@ -106,6 +126,9 @@ func (h *AdminHandler) list(c *gin.Context) {
 	}
 
 	for i := range msgs {
+		if h.sensitive[msgs[i].Topic] {
+			msgs[i].Payload = RedactedPayload
+		}
 		if msgs[i].ProcessedAt != nil {
 			msgs[i].Status = "processed"
 		} else if msgs[i].FailedAt != nil {

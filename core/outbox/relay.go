@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -26,7 +27,19 @@ type Message struct {
 
 // Handler delivers one message. It must be idempotent: a message can be
 // delivered more than once (e.g. if the relay stops right after delivering).
+// Return Permanent(err) when retrying can't help: the message is set aside at once.
 type Handler func(ctx context.Context, msg Message) error
+
+// ErrPermanent marks a delivery failure that retrying won't fix (see Permanent).
+var ErrPermanent = errors.New("outbox: permanent failure")
+
+// Permanent wraps err so the relay sets the message aside without retrying it.
+func Permanent(err error) error {
+	if errors.Is(err, ErrPermanent) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrPermanent, err)
+}
 
 // RelayOptions tune delivery. Zero values use the defaults.
 type RelayOptions struct {
@@ -53,6 +66,8 @@ type Relay struct {
 	notify   chan struct{}
 	opts     RelayOptions
 	handlers map[string]Handler
+	// topics whose payload is emptied once delivered
+	sensitive map[string]bool
 
 	cancel context.CancelFunc
 	done   sync.WaitGroup
@@ -80,13 +95,22 @@ func (o *Outbox) NewRelay(db *gorm.DB, l logger.Logger, opts RelayOptions) *Rela
 	if opts.Retention <= 0 {
 		opts.Retention = 7 * 24 * time.Hour
 	}
-	return &Relay{db: db, logger: l, notify: o.notify, opts: opts, handlers: map[string]Handler{}}
+	return &Relay{db: db, logger: l, notify: o.notify, opts: opts, handlers: map[string]Handler{}, sensitive: map[string]bool{}}
 }
 
 // Handle registers the handler of a topic. Messages of topics without a
 // handler stay pending (another release may handle them).
 func (r *Relay) Handle(topic string, h Handler) {
 	r.handlers[topic] = h
+}
+
+// HandleSensitive is Handle for topics whose payload must not outlive its
+// delivery (e.g. mail with a password reset link): the payload is replaced by
+// {} when the message is delivered. Messages set aside keep it, to be retried.
+// Hide it from the admin API too (WithSensitiveTopics).
+func (r *Relay) HandleSensitive(topic string, h Handler) {
+	r.handlers[topic] = h
+	r.sensitive[topic] = true
 }
 
 // Start runs the relay in the background until Stop.
@@ -187,7 +211,11 @@ func (r *Relay) RunOnce(ctx context.Context) (int, error) {
 			if err := r.deliver(ctx, m); err != nil {
 				return r.recordFailure(tx, m, err)
 			}
-			if err := tx.Exec(`UPDATE outbox_messages SET processed_at = now(), last_error = '' WHERE id = ?`, m.ID).Error; err != nil {
+			done := `UPDATE outbox_messages SET processed_at = now(), last_error = '' WHERE id = ?`
+			if r.sensitive[m.Topic] {
+				done = `UPDATE outbox_messages SET processed_at = now(), last_error = '', payload = '{}'::jsonb WHERE id = ?`
+			}
+			if err := tx.Exec(done, m.ID).Error; err != nil {
 				return err
 			}
 			delivered++
@@ -227,7 +255,7 @@ func (r *Relay) recordFailure(tx *gorm.DB, m row, cause error) error {
 	attempts := m.Attempts + 1
 	entry := r.logger.WithFields(logger.Fields{"outbox_id": m.ID, "topic": m.Topic, "key": m.Key, "attempts": attempts})
 
-	if attempts >= r.opts.MaxAttempts {
+	if attempts >= r.opts.MaxAttempts || errors.Is(cause, ErrPermanent) {
 		entry.Errorf("outbox message set aside after %d attempts: %v", attempts, cause)
 		return tx.Exec(`UPDATE outbox_messages SET attempts = ?, last_error = ?, failed_at = now() WHERE id = ?`,
 			attempts, cause.Error(), m.ID).Error

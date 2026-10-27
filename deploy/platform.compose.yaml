@@ -84,6 +84,18 @@ services:
     restart: unless-stopped
     ports: ["6379:6379"]
 
+  # catches the apps' mail (MAIL_DRIVER=smtp, MAIL_SMTP_URL=smtp://mailpit:1025?tls=none):
+  # nothing leaves the machine, read it at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+      # reverse DNS of every client times out in Docker: 5s per message
+      MP_SMTP_DISABLE_RDNS: "true"
+    ports: ["8025:8025", "1025:1025"]
+
   alloy:
     image: grafana/alloy:v1.20.1
     restart: unless-stopped
